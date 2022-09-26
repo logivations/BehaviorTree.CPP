@@ -159,6 +159,8 @@ list(APPEND BT_SOURCE
     src/decorators/keep_trying_node.cpp
     src/decorators/subtree_node.cpp
     src/decorators/delay_node.cpp
+    src/decorators/suspend_node.cpp
+
 
     src/controls/if_then_else_node.cpp
     src/controls/fallback_node.cpp
