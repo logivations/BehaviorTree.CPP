@@ -25,6 +25,7 @@ set(BT_TESTS
   gtest_substitution.cpp
   gtest_subtree.cpp
   gtest_switch.cpp
+  gtest_timer_queue.cpp
   gtest_tree.cpp
   gtest_updates.cpp
   gtest_wakeup.cpp

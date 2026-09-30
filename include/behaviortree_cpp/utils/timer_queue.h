@@ -30,6 +30,17 @@ public:
     m_cv.notify_one();
   }
 
+  void wait()
+  {
+    std::unique_lock<std::mutex> lock(m_mtx);
+    m_cv.wait(lock, [this]() { return m_count > 0 || m_unlock; });
+    if(m_count > 0)
+    {
+      m_count--;
+    }
+    m_unlock = false;
+  }
+
   template <class Clock, class Duration>
   bool waitUntil(const std::chrono::time_point<Clock, Duration>& point)
   {
@@ -185,8 +196,11 @@ private:
       }
       else
       {
-        // No timers exist, so wait an arbitrary amount of time
-        m_checkWork.waitUntil(_Clock::now() + std::chrono::milliseconds(10));
+        // No timers exist, so wait until something changes: add(), cancel(),
+        // cancelAll() and the destructor all notify m_checkWork. Polling here
+        // (the upstream 10 ms timeout) wakes every idle TimerQueue thread
+        // 100 times per second for nothing.
+        m_checkWork.wait();
       }
 
       // Check and execute as much work as possible, such as, all expired
