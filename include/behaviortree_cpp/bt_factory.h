@@ -123,6 +123,14 @@ public:
   /// TreeNode::emitWakeUpSignal()
   void sleep(std::chrono::system_clock::duration timeout);
 
+  /**
+   * @brief Returns the shared WakeUpSignal used by this tree.
+   * This can be used to check for preemption externally, e.g. when
+   * implementing custom sleep logic with a different clock source.
+   * Returns nullptr if the tree has not been initialized yet.
+   */
+  [[nodiscard]] std::shared_ptr<WakeUpSignal> wakeUpSignal() const;
+
   ~Tree();
 
   /// Tick the root of the tree once, even if a node invoked
