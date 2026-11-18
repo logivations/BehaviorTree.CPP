@@ -1,19 +1,72 @@
 cmake_minimum_required(VERSION 3.16.3) # version on Ubuntu Focal
 
-project(behaviortree_cpp VERSION 4.6.2 LANGUAGES C CXX)
+project(behaviortree_cpp VERSION 4.11.1 LANGUAGES C CXX)
 
-set(CMAKE_CONFIG_PATH ${CMAKE_MODULE_PATH}  "${CMAKE_CURRENT_LIST_DIR}/cmake")
+# create compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+
+#---- project configuration ----
+option(BTCPP_SHARED_LIBS "Build shared libraries" ON)
+option(BTCPP_BUILD_TOOLS "Build commandline tools" ON)
+option(BTCPP_EXAMPLES   "Build tutorials and examples" ON)
+option(BUILD_TESTING "Build the unit tests" ON)
+option(BTCPP_GROOT_INTERFACE "Add Groot2 connection. Requires ZeroMQ" ON)
+option(BTCPP_SQLITE_LOGGING "Add SQLite logging." ON)
+option(BTCPP_ENABLE_ASAN "Enable Address Sanitizer" OFF)
+option(BTCPP_ENABLE_UBSAN "Enable Undefined Behavior Sanitizer" OFF)
+option(BTCPP_ENABLE_TSAN "Enable Thread Sanitizer" OFF)
+
+option(USE_V3_COMPATIBLE_NAMES  "Use some alias to compile more easily old 3.x code" OFF)
+option(ENABLE_FUZZING "Enable fuzzing builds" OFF)
+option(USE_AFLPLUSPLUS "Use AFL++ instead of libFuzzer" OFF)
+option(ENABLE_DEBUG "Enable debug build with full symbols" OFF)
+option(FORCE_STATIC_LINKING "Force static linking of all dependencies" OFF)
+
+option(USE_VENDORED_CPPZMQ "Use the bundled version of cppzmq" ON)
+option(USE_VENDORED_FLATBUFFERS "Use the bundled version of flatbuffers" ON)
+option(USE_VENDORED_JSON "Use the bundled version of nlohmann/json" ON)
+option(USE_VENDORED_MINICORO "Use the bundled version of minicoro" ON)
+option(USE_VENDORED_MINITRACE "Use the bundled version of minitrace" ON)
+
+include(GNUInstallDirs)
+
+set(BTCPP_LIB_DESTINATION     "${CMAKE_INSTALL_LIBDIR}"     CACHE STRING "Library installation directory")
+set(BTCPP_INCLUDE_DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}" CACHE STRING "Header installation directory")
+set(BTCPP_BIN_DESTINATION     "${CMAKE_INSTALL_BINDIR}"     CACHE STRING "Binary installation directory")
+
+set(BASE_FLAGS "")
+
+if(ENABLE_DEBUG)
+    list(APPEND BASE_FLAGS
+        -g3
+        -ggdb3
+        -O0
+        -fno-omit-frame-pointer
+    )
+endif()
+
+# Include fuzzing configuration if enabled
+if(ENABLE_FUZZING)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/fuzzing_build.cmake)
+else()
+    # Apply base flags for non-fuzzing builds
+    add_compile_options(${BASE_FLAGS})
+    add_link_options(${BASE_FLAGS})
+endif()
+
+set(CMAKE_CONFIG_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CONFIG_PATH}")
+
+include(sanitizers)
 
 set(BTCPP_LIBRARY ${PROJECT_NAME})
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  message(STATUS "Setting build type to 'Release' as none was specified.")
-  set(CMAKE_BUILD_TYPE "Release" CACHE
-      STRING "Choose the type of build." FORCE)
-  # Set the possible values of build type for cmake-gui
-  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
-    "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+    message(STATUS "Setting build type to 'Release' as none was specified.")
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
 if(MSVC)
@@ -22,26 +75,9 @@ else()
     add_definitions(-Wpedantic -fno-omit-frame-pointer)
 endif()
 
-
-#---- project configuration ----
-option(BTCPP_SHARED_LIBS "Build shared libraries" ON)
-option(BTCPP_BUILD_TOOLS "Build commandline tools" ON)
-option(BTCPP_EXAMPLES   "Build tutorials and examples" ON)
-option(BTCPP_UNIT_TESTS "Build the unit tests" ON)
-option(BTCPP_GROOT_INTERFACE "Add Groot2 connection. Requires ZeroMQ" ON)
-option(BTCPP_SQLITE_LOGGING "Add SQLite logging." ON)
-
-option(USE_V3_COMPATIBLE_NAMES  "Use some alias to compile more easily old 3.x code" OFF)
-
 if(USE_V3_COMPATIBLE_NAMES)
     add_definitions(-DUSE_BTCPP3_OLD_NAMES)
 endif()
-
-#---- Find other packages ----
-find_package(Threads REQUIRED)
-
-
-set(BEHAVIOR_TREE_LIBRARY ${PROJECT_NAME})
 
 # Update the policy setting to avoid an error when loading the ament_cmake package
 # at the current cmake version level
@@ -55,34 +91,64 @@ if ( ament_cmake_FOUND )
 
     add_definitions( -DUSING_ROS2 )
     message(STATUS "------------------------------------------")
-    message(STATUS "BehaviourTree is being built using AMENT.")
+    message(STATUS "BehaviorTree is being built using AMENT.")
     message(STATUS "------------------------------------------")
     include(cmake/ament_build.cmake)
 
-elseif( CATKIN_DEVEL_PREFIX OR CATKIN_BUILD_BINARY_PACKAGE)
-
-    add_definitions( -DUSING_ROS )
-    message(STATUS "------------------------------------------")
-    message(STATUS "BehaviourTree is being built using CATKIN.")
-    message(STATUS "------------------------------------------")
-    include(cmake/catkin_build.cmake)
-    set(catkin_FOUND TRUE)
+    find_package(tinyxml2_vendor QUIET)
+    find_package(TinyXML2 REQUIRED)
 else()
     message(STATUS "------------------------------------------")
-    message(STATUS "BehaviourTree is being built with conan.")
+    message(STATUS "BehaviorTree is being built without AMENT.")
     message(STATUS "------------------------------------------")
     include(cmake/conan_build.cmake)
+
+    option(USE_VENDORED_TINYXML2 "Use the bundled version of tinyxml2" ON)
+    if(USE_VENDORED_TINYXML2)
+        add_subdirectory(3rdparty/tinyxml2)
+    else()
+        find_package(tinyxml2 REQUIRED)
+    endif()
 endif()
 
-
 #############################################################
-# LIBRARY
+# Handle dependencies
 
-add_subdirectory(3rdparty/lexy)
+find_package(Threads REQUIRED)
 
-add_library(minitrace STATIC 3rdparty/minitrace/minitrace.cpp)
-target_compile_definitions(minitrace PRIVATE MTR_ENABLED=True)
-set_property(TARGET minitrace PROPERTY POSITION_INDEPENDENT_CODE ON)
+if(BTCPP_GROOT_INTERFACE)
+    if(USE_VENDORED_CPPZMQ)
+        add_subdirectory(3rdparty/cppzmq)
+    else()
+        find_package(cppzmq REQUIRED)
+    endif()
+endif()
+
+if(BTCPP_SQLITE_LOGGING)
+    find_package(SQLite3 REQUIRED)
+endif()
+
+if(USE_VENDORED_FLATBUFFERS)
+    add_subdirectory(3rdparty/flatbuffers)
+else()
+    find_package(flatbuffers REQUIRED)
+endif()
+
+if(NOT USE_VENDORED_JSON)
+    find_package(nlohmann_json 3.10 REQUIRED)
+endif()
+
+if(USE_VENDORED_MINICORO)
+    add_subdirectory(3rdparty/minicoro)
+else()
+    find_package(minicoro REQUIRED)
+endif()
+
+if(USE_VENDORED_MINITRACE)
+    add_subdirectory(3rdparty/minitrace)
+else()
+    find_package(minitrace REQUIRED)
+endif()
 
 list(APPEND BT_SOURCE
     src/action_node.cpp
@@ -96,6 +162,7 @@ list(APPEND BT_SOURCE
     src/shared_library.cpp
     src/tree_node.cpp
     src/script_parser.cpp
+    src/script_tokenizer.cpp
     src/json_export.cpp
     src/xml_parsing.cpp
 
@@ -120,14 +187,15 @@ list(APPEND BT_SOURCE
     src/controls/sequence_node.cpp
     src/controls/sequence_with_memory_node.cpp
     src/controls/switch_node.cpp
+    src/controls/finally_node.cpp
+    src/controls/try_catch_node.cpp
     src/controls/while_do_else_node.cpp
 
+    src/loggers/abstract_logger.cpp
     src/loggers/bt_cout_logger.cpp
     src/loggers/bt_file_logger_v2.cpp
     src/loggers/bt_minitrace_logger.cpp
     src/loggers/bt_observer.cpp
-
-    3rdparty/tinyxml2/tinyxml2.cpp
     )
 
 
@@ -151,6 +219,18 @@ if (WIN32)
     list(APPEND BT_SOURCE src/shared_library_WIN.cpp )
 endif()
 
+# Embed src/btcpp4_schematron.sch as a C++ string constant.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/btcpp4_schematron.sch"
+)
+
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/btcpp4_schematron.sch" BTCPP_SCHEMATRON_TEMPLATE)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/schematron_template.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/schematron_template.gen.h"
+    @ONLY
+)
+
 if (BTCPP_SHARED_LIBS)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
     add_library(${BTCPP_LIBRARY} SHARED ${BT_SOURCE})
@@ -165,46 +245,88 @@ target_link_libraries(${BTCPP_LIBRARY}
     PRIVATE
         Threads::Threads
         ${CMAKE_DL_LIBS}
-        $<BUILD_INTERFACE:foonathan::lexy>
-        minitrace
+        $<BUILD_INTERFACE:minitrace::minitrace>
+        $<BUILD_INTERFACE:tinyxml2::tinyxml2>
+        $<BUILD_INTERFACE:minicoro::minicoro>
+        $<BUILD_INTERFACE:flatbuffers::flatbuffers>
     PUBLIC
         ${BTCPP_EXTRA_LIBRARIES}
 )
+
+if(BTCPP_GROOT_INTERFACE)
+    target_link_libraries(${BTCPP_LIBRARY}
+        PUBLIC
+            $<BUILD_INTERFACE:cppzmq>
+    )
+endif()
+
+if(BTCPP_SQLITE_LOGGING)
+    target_link_libraries(${BTCPP_LIBRARY}
+        PRIVATE
+            $<BUILD_INTERFACE:SQLite::SQLite3>
+    )
+endif()
 
 target_include_directories(${BTCPP_LIBRARY}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/3rdparty>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/lexy/include>
         ${BTCPP_EXTRA_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
 
-target_compile_definitions(${BTCPP_LIBRARY} PRIVATE $<$<CONFIG:Debug>:TINYXML2_DEBUG>)
-target_compile_definitions(${BTCPP_LIBRARY} PUBLIC BTCPP_LIBRARY_VERSION="${CMAKE_PROJECT_VERSION}")
+target_compile_definitions(${BTCPP_LIBRARY} PUBLIC BTCPP_LIBRARY_VERSION="${PROJECT_VERSION}")
+
+if(NOT USE_VENDORED_JSON)
+    # The public headers include <nlohmann/json.hpp> instead of the bundled copy
+    target_compile_definitions(${BTCPP_LIBRARY} PUBLIC BTCPP_SYSTEM_JSON)
+    target_link_libraries(${BTCPP_LIBRARY} PUBLIC nlohmann_json::nlohmann_json)
+endif()
 
 target_compile_features(${BTCPP_LIBRARY} PUBLIC cxx_std_17)
 
 if(MSVC)
-else()
-    target_compile_options(${BTCPP_LIBRARY} PRIVATE -Wall -Wextra)
+    target_compile_options(${BTCPP_LIBRARY} PRIVATE "/source-charset:utf-8")
+elseif(ENABLE_DEBUG)
+    target_compile_options(${BTCPP_LIBRARY} PRIVATE -g3 -ggdb3 -O0 -fno-omit-frame-pointer)
 endif()
 
 add_library(BT::${BTCPP_LIBRARY} ALIAS ${BTCPP_LIBRARY})
 
+# Downstream projects (e.g. Nav2) compile our public headers with -Werror, so
+# the library and every target below that instantiates them must be
+# warning-free (issue #1288). -Wnull-dereference only fires with optimization.
+# Set after the 3rdparty subdirectories, so vendored code is not affected.
+if(MSVC)
+    # C4702 (unreachable code) is a code-generation warning that fires on
+    # instantiation-dependent `if constexpr` tails; GCC/Clang have no
+    # equivalent in -Wall -Wextra.
+    set(BTCPP_WARNING_FLAGS /W4 /WX /permissive- /wd4702)
+else()
+    set(BTCPP_WARNING_FLAGS -Wall -Wextra -Wpedantic -Wnull-dereference -Werror)
+endif()
+target_compile_options(${BTCPP_LIBRARY} PRIVATE ${BTCPP_WARNING_FLAGS})
+add_compile_options(${BTCPP_WARNING_FLAGS})
+
+# Add fuzzing targets
+if(ENABLE_FUZZING)
+    add_fuzzing_targets()
+endif()
+
 #############################################################
 message( STATUS "BTCPP_LIB_DESTINATION:   ${BTCPP_LIB_DESTINATION} " )
 message( STATUS "BTCPP_INCLUDE_DESTINATION: ${BTCPP_INCLUDE_DESTINATION} " )
-message( STATUS "BTCPP_UNIT_TESTS:   ${BTCPP_UNIT_TESTS} " )
 
-if (BTCPP_UNIT_TESTS OR BTCPP_EXAMPLES)
-add_subdirectory(sample_nodes)
+if (BUILD_TESTING OR BTCPP_EXAMPLES)
+    add_subdirectory(sample_nodes)
 endif()
 
 ######################################################
 
-if (BTCPP_UNIT_TESTS)
+include(CTest)
+message( STATUS "BUILD_TESTING:   ${BUILD_TESTING} " )
+if (BUILD_TESTING)
     add_subdirectory(tests)
 endif()
 
@@ -217,6 +339,20 @@ if(BTCPP_EXAMPLES)
 endif()
 
 ######################################################
+# Generate .clangd configuration file for standalone header checking
+file(WRITE ${PROJECT_SOURCE_DIR}/.clangd
+"CompileFlags:
+  Add:
+    - -xc++
+    - -std=c++17
+    - -I${PROJECT_SOURCE_DIR}/include
+    - -I${PROJECT_SOURCE_DIR}/3rdparty
+    - -I${PROJECT_SOURCE_DIR}/3rdparty/minitrace
+    - -I${PROJECT_SOURCE_DIR}/3rdparty/tinyxml2
+    - -I${PROJECT_SOURCE_DIR}/3rdparty/minicoro
+")
+
+######################################################
 # INSTALL
 
 INSTALL(TARGETS ${BTCPP_LIBRARY}
@@ -227,8 +363,14 @@ INSTALL(TARGETS ${BTCPP_LIBRARY}
     INCLUDES DESTINATION ${BTCPP_INCLUDE_DESTINATION}
     )
 
+if(NOT USE_VENDORED_JSON)
+    # Don't install the bundled copy: a user that doesn't get BTCPP_SYSTEM_JSON
+    # must fail to compile, rather than mix two versions of nlohmann::json
+    set(BTCPP_INSTALL_EXCLUDE REGEX "contrib/json\\.hpp$" EXCLUDE)
+endif()
+
 INSTALL( DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
     DESTINATION ${BTCPP_INCLUDE_DESTINATION}
-    FILES_MATCHING PATTERN "*.h*")
+    FILES_MATCHING PATTERN "*.h*" ${BTCPP_INSTALL_EXCLUDE})
 
 export_btcpp_package()

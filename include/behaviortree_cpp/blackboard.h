@@ -1,15 +1,22 @@
 #pragma once
 
-#include <string>
-#include <memory>
-#include <unordered_map>
-#include <mutex>
-
 #include "behaviortree_cpp/basic_types.h"
+#ifdef BTCPP_SYSTEM_JSON
+#include <nlohmann/json.hpp>
+#else
 #include "behaviortree_cpp/contrib/json.hpp"
-#include "behaviortree_cpp/utils/safe_any.hpp"
+#endif
 #include "behaviortree_cpp/exceptions.h"
 #include "behaviortree_cpp/utils/locked_reference.hpp"
+#include "behaviortree_cpp/utils/polymorphic_cast_registry.hpp"
+#include "behaviortree_cpp/utils/safe_any.hpp"
+#include "behaviortree_cpp/utils/thread_safe_signal.h"
+
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <string>
+#include <unordered_map>
 
 namespace BT
 {
@@ -33,6 +40,9 @@ class Blackboard
 {
 public:
   using Ptr = std::shared_ptr<Blackboard>;
+  using EntryUpdatedSignal = ThreadSafeSignal<>;
+  using EntryUpdatedSubscriber = EntryUpdatedSignal::Subscriber;
+  using EntryUpdatedCallback = EntryUpdatedSignal::CallableFunction;
 
 protected:
   // This is intentionally protected. Use Blackboard::create instead
@@ -40,6 +50,11 @@ protected:
   {}
 
 public:
+  Blackboard(const Blackboard&) = delete;
+  Blackboard& operator=(const Blackboard&) = delete;
+  Blackboard(Blackboard&&) = delete;
+  Blackboard& operator=(Blackboard&&) = delete;
+
   struct Entry
   {
     Any value;
@@ -51,10 +66,20 @@ public:
     // timestamp since epoch
     std::chrono::nanoseconds stamp = std::chrono::nanoseconds{ 0 };
 
+    // Subscribers of subscribeToEntry(), created on the first subscription.
+    // Protected by entry_mutex. It must remain the last member: Entry is
+    // allocated only inside the library, so appending it keeps the offsets of
+    // the members above (accessed by inline code) unchanged.
+    std::shared_ptr<EntryUpdatedSignal> update_signal;
+
     Entry(const TypeInfo& _info) : info(_info)
     {}
 
-    Entry& operator=(const Entry& other);
+    ~Entry() = default;
+    Entry(const Entry&) = delete;
+    Entry& operator=(const Entry&) = delete;
+    Entry(Entry&&) = delete;
+    Entry& operator=(Entry&&) = delete;
   };
 
   /** Use this static method to create an instance of the BlackBoard
@@ -104,6 +129,30 @@ public:
   template <typename T>
   void set(const std::string& key, const T& value);
 
+  /** Subscribe to successful writes to the entry of a key.
+   * Subtree remapping and root keys are resolved at subscription time. If the
+   * entry doesn't exist, a generic (AnyTypeAllowed) one is created: the first
+   * strongly typed write sets its type, as usual. The subscription is bound to
+   * that entry: unset() drops it and a re-created entry is not observed.
+   * No initial notification is sent, and assigning the same value still notifies.
+   * Writes compiled against headers older than this API do not notify.
+   *
+   * Callbacks run synchronously on the writer's thread, outside blackboard
+   * locks, and may read the latest value. Concurrent writers may invoke a
+   * callback concurrently; intermediate values are not retained. Exceptions
+   * propagate to the writer after the value has been stored.
+   * Resetting the handle prevents future calls but does not wait for a call
+   * already in progress. Stop writers before destroying callback targets.
+   */
+  [[nodiscard]] EntryUpdatedSubscriber subscribeToEntry(const std::string& key,
+                                                        EntryUpdatedCallback callback);
+
+  /** Notify subscribers after directly modifying an entry. Release its lock
+   * before calling this function. Raw Entry/AnyPtrLocked mutations do not
+   * notify automatically; set(), scripts, JSON import and cloneInto() do.
+   */
+  void notifyEntryUpdated(const std::string& key);
+
   void unset(const std::string& key);
 
   [[nodiscard]] const TypeInfo* entryInfo(const std::string& key);
@@ -112,13 +161,17 @@ public:
 
   void debugMessage() const;
 
-  [[nodiscard]] std::vector<StringView> getKeys() const;
+  /// The names of all the entries stored in this blackboard (copies).
+  [[nodiscard]] std::vector<std::string> getKeyNames() const;
+
+  // The views point into the storage: they dangle as soon as another thread
+  // removes the entry.
+  [[deprecated(
+      "The views may dangle: use getKeyNames")]] [[nodiscard]] std::vector<StringView>
+  getKeys() const;
 
   [[deprecated("This command is unsafe. Consider using Backup/Restore instead")]] void
   clear();
-
-  [[deprecated("Use getAnyLocked to access safely an Entry")]] std::recursive_mutex&
-  entryMutex() const;
 
   void createEntry(const std::string& key, const TypeInfo& info);
 
@@ -140,9 +193,36 @@ public:
 
   const Blackboard* rootBlackboard() const;
 
+  /**
+   * @brief Set the polymorphic cast registry for this blackboard.
+   *
+   * The registry enables polymorphic shared_ptr conversions during get().
+   * This is typically set automatically when creating trees via BehaviorTreeFactory.
+   */
+  void setPolymorphicCastRegistry(std::shared_ptr<PolymorphicCastRegistry> registry)
+  {
+    polymorphic_registry_ = std::move(registry);
+  }
+
+  /**
+   * @brief Get the polymorphic cast registry (may be null).
+   */
+  [[nodiscard]] const PolymorphicCastRegistry* polymorphicCastRegistry() const
+  {
+    return polymorphic_registry_.get();
+  }
+
+  /**
+   * @brief Cast Any value with polymorphic fallback for shared_ptr types.
+   *
+   * First attempts a direct cast. If that fails and T is a shared_ptr type,
+   * tries a polymorphic cast via the registry. Returns Expected with error on failure.
+   */
+  template <typename T>
+  [[nodiscard]] Expected<T> tryCastWithPolymorphicFallback(const Any* any) const;
+
 private:
-  mutable std::mutex mutex_;
-  mutable std::recursive_mutex entry_mutex_;
+  mutable std::shared_mutex storage_mutex_;
   std::unordered_map<std::string, std::shared_ptr<Entry>> storage_;
   std::weak_ptr<Blackboard> parent_bb_;
   std::unordered_map<std::string, std::string> internal_to_external_;
@@ -150,6 +230,9 @@ private:
   std::shared_ptr<Entry> createEntryImpl(const std::string& key, const TypeInfo& info);
 
   bool autoremapping_ = false;
+
+  // Optional registry for polymorphic shared_ptr conversions
+  std::shared_ptr<PolymorphicCastRegistry> polymorphic_registry_;
 };
 
 /**
@@ -169,6 +252,32 @@ void ImportBlackboardFromJSON(const nlohmann::json& json, Blackboard& blackboard
 //------------------------------------------------------
 
 template <typename T>
+inline Expected<T> Blackboard::tryCastWithPolymorphicFallback(const Any* any) const
+{
+  // Try direct cast first
+  auto result = any->tryCast<T>();
+  if(result)
+  {
+    return result.value();
+  }
+
+  // For shared_ptr types, try polymorphic cast via registry (Issue #943)
+  if constexpr(is_shared_ptr<T>::value)
+  {
+    if(polymorphic_registry_)
+    {
+      auto poly_result = any->tryCastWithRegistry<T>(*polymorphic_registry_);
+      if(poly_result)
+      {
+        return poly_result.value();
+      }
+    }
+  }
+
+  return nonstd::make_unexpected(result.error());
+}
+
+template <typename T>
 inline T Blackboard::get(const std::string& key) const
 {
   if(auto any_ref = getAnyLocked(key))
@@ -179,14 +288,21 @@ inline T Blackboard::get(const std::string& key) const
       throw RuntimeError("Blackboard::get() error. Entry [", key,
                          "] hasn't been initialized, yet");
     }
-    return any_ref.get()->cast<T>();
+    auto result = tryCastWithPolymorphicFallback<T>(any);
+    if(!result)
+    {
+      throw std::runtime_error(result.error());
+    }
+    return result.value();
   }
   throw RuntimeError("Blackboard::get() error. Missing key [", key, "]");
 }
 
 inline void Blackboard::unset(const std::string& key)
 {
-  std::unique_lock lock(mutex_);
+  // the entry (i.e. the stored value) is destroyed outside the lock
+  std::shared_ptr<Entry> removed;
+  std::unique_lock storage_lock(storage_mutex_);
 
   // check local storage
   auto it = storage_.find(key);
@@ -196,6 +312,7 @@ inline void Blackboard::unset(const std::string& key)
     return;
   }
 
+  removed = std::move(it->second);
   storage_.erase(it);
 }
 
@@ -207,15 +324,18 @@ inline void Blackboard::set(const std::string& key, const T& value)
     rootBlackboard()->set(key.substr(1, key.size() - 1), value);
     return;
   }
-  std::unique_lock lock(mutex_);
-
-  // check local storage
-  auto it = storage_.find(key);
-  if(it == storage_.end())
+  // getEntry() follows the remapping to the parent blackboard, exactly like
+  // the readers do. A key that resolves to an existing entry (local or
+  // remapped) must go through the type check below: createEntryImpl() would
+  // follow the same remapping and return the pre-existing entry, and writing
+  // to it blindly bypasses the type lock and the string conversion.
+  auto entry_ptr = getEntry(key);
+  // copied under entry_mutex, notified after releasing it
+  std::shared_ptr<EntryUpdatedSignal> update_signal;
+  if(!entry_ptr)
   {
     // create a new entry
     Any new_value(value);
-    lock.unlock();
     std::shared_ptr<Blackboard::Entry> entry;
     // if a new generic port is created with a string, it's type should be AnyTypeAllowed
     if constexpr(std::is_same_v<std::string, T>)
@@ -228,18 +348,22 @@ inline void Blackboard::set(const std::string& key, const T& value)
                         GetAnyFromStringFunctor<T>());
       entry = createEntryImpl(key, new_port);
     }
-    lock.lock();
 
+    // Lock entry_mutex before writing to prevent data races with
+    // concurrent readers (BUG-1/BUG-8 fix).
+    std::scoped_lock entry_lock(entry->entry_mutex);
     entry->value = new_value;
     entry->sequence_id++;
     entry->stamp = std::chrono::steady_clock::now().time_since_epoch();
+    update_signal = entry->update_signal;
   }
   else
   {
     // this is not the first time we set this entry, we need to check
     // if the type is the same or not.
-    Entry& entry = *it->second;
-    std::scoped_lock scoped_lock(entry.entry_mutex);
+    Entry& entry = *entry_ptr;
+
+    std::unique_lock scoped_lock(entry.entry_mutex);
 
     Any& previous_any = entry.value;
     Any new_value(value);
@@ -252,6 +376,12 @@ inline void Blackboard::set(const std::string& key, const T& value)
       entry.sequence_id++;
       entry.stamp = std::chrono::steady_clock::now().time_since_epoch();
       previous_any = std::move(new_value);
+      update_signal = entry.update_signal;
+      scoped_lock.unlock();
+      if(update_signal)
+      {
+        update_signal->notify();
+      }
       return;
     }
 
@@ -306,6 +436,11 @@ inline void Blackboard::set(const std::string& key, const T& value)
     }
     entry.sequence_id++;
     entry.stamp = std::chrono::steady_clock::now().time_since_epoch();
+    update_signal = entry.update_signal;
+  }
+  if(update_signal)
+  {
+    update_signal->notify();
   }
 }
 
@@ -314,11 +449,17 @@ inline bool Blackboard::get(const std::string& key, T& value) const
 {
   if(auto any_ref = getAnyLocked(key))
   {
-    if(any_ref.get()->empty())
+    const auto& any = any_ref.get();
+    if(any->empty())
     {
       return false;
     }
-    value = any_ref.get()->cast<T>();
+    auto result = tryCastWithPolymorphicFallback<T>(any);
+    if(!result)
+    {
+      throw std::runtime_error(result.error());
+    }
+    value = result.value();
     return true;
   }
   return false;
@@ -335,8 +476,13 @@ inline Expected<Timestamp> Blackboard::getStamped(const std::string& key, T& val
       return nonstd::make_unexpected(StrCat("Blackboard::getStamped() error. Entry [",
                                             key, "] hasn't been initialized, yet"));
     }
-    value = entry->value.cast<T>();
-    return Timestamp{ entry->sequence_id, entry->stamp };
+    auto result = tryCastWithPolymorphicFallback<T>(&entry->value);
+    if(result)
+    {
+      value = result.value();
+      return Timestamp{ entry->sequence_id, entry->stamp };
+    }
+    return nonstd::make_unexpected(result.error());
   }
   return nonstd::make_unexpected(
       StrCat("Blackboard::getStamped() error. Missing key [", key, "]"));

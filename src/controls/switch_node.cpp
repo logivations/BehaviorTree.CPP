@@ -1,4 +1,4 @@
-/* Copyright (C) 2019-2022 Davide Faconti, Eurecat -  All Rights Reserved
+/* Copyright (C) 2019-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -39,13 +39,15 @@ bool CheckStringEquality(const std::string& v1, const std::string& v2,
       }
     }
 #if __cpp_lib_to_chars >= 201611L
-    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
-    return (ec == std::errc());
+    const char* end = str.data() + str.size();
+    auto [ptr, ec] = std::from_chars(str.data(), end, result);
+    return ec == std::errc() && ptr == end;
 #else
     try
     {
-      result = std::stoi(str);
-      return true;
+      std::size_t pos = 0;
+      result = std::stoi(str, &pos);
+      return pos == str.size();
     }
     catch(...)
     {
@@ -60,30 +62,29 @@ bool CheckStringEquality(const std::string& v1, const std::string& v2,
     return true;
   }
   // compare as real numbers next
-  auto ToReal = [](const std::string& str, auto& result) -> bool {
+  auto ToReal = [enums](const std::string& str, auto& result) -> bool {
+    if(enums)
+    {
+      auto it = enums->find(str);
+      if(it != enums->end())
+      {
+        result = it->second;
+        return true;
+      }
+    }
 #if __cpp_lib_to_chars >= 201611L
-    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
-    return (ec == std::errc());
+    const char* end = str.data() + str.size();
+    auto [ptr, ec] = std::from_chars(str.data(), end, result);
+    return ec == std::errc() && ptr == end;
 #else
-    try
-    {
-      result = std::stod(str);
-      return true;
-    }
-    catch(...)
-    {
-      return false;
-    }
+    // locale-independent, unlike std::stod (see parseDouble)
+    return parseDouble(str, result, /*require_full_consumption=*/true);
 #endif
   };
   double v1_real = 0;
   double v2_real = 0;
   constexpr auto eps = double(std::numeric_limits<float>::epsilon());
-  if(ToReal(v1, v1_real) && ToReal(v2, v2_real) && std::abs(v1_real - v2_real) <= eps)
-  {
-    return true;
-  }
-  return false;
+  return ToReal(v1, v1_real) && ToReal(v2, v2_real) && std::abs(v1_real - v2_real) <= eps;
 }
 
 }  // namespace BT::details

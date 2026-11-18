@@ -1,5 +1,5 @@
 /* Copyright (C) 2015-2018 Michele Colledanchise -  All Rights Reserved
-*  Copyright (C) 2018-2023 Davide Faconti -  All Rights Reserved
+*  Copyright (C) 2018-2025 Davide Faconti -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -13,16 +13,17 @@
 
 #pragma once
 
+#include "behaviortree_cpp/basic_types.h"
+#include "behaviortree_cpp/blackboard.h"
+#include "behaviortree_cpp/scripting/script_parser.hpp"
+#include "behaviortree_cpp/utils/signal.h"
+#include "behaviortree_cpp/utils/strcat.hpp"
+#include "behaviortree_cpp/utils/wakeup_signal.hpp"
+
+#include <charconv>
 #include <exception>
 #include <map>
 #include <utility>
-
-#include "behaviortree_cpp/utils/signal.h"
-#include "behaviortree_cpp/basic_types.h"
-#include "behaviortree_cpp/blackboard.h"
-#include "behaviortree_cpp/utils/strcat.hpp"
-#include "behaviortree_cpp/utils/wakeup_signal.hpp"
-#include "behaviortree_cpp/scripting/script_parser.hpp"
 
 #ifdef _MSC_VER
 #pragma warning(disable : 4127)
@@ -41,16 +42,52 @@ struct TreeNodeManifest
 };
 
 using PortsRemapping = std::unordered_map<std::string, std::string>;
+using NonPortAttributes = std::unordered_map<std::string, std::string>;
 
+/**
+ * @brief Pre-conditions that can be attached to any node via XML attributes.
+ *
+ * Pre-conditions are evaluated in the order defined by this enum (FAILURE_IF first,
+ * then SUCCESS_IF, SKIP_IF, WHILE_TRUE, ONLY_IF and finally ON_START).
+ *
+ * **Important**: all of them except WHILE_TRUE are evaluated **only once**
+ * when the node transitions from IDLE (or SKIPPED) to another state.
+ * They are NOT re-evaluated while the node is RUNNING.
+ *
+ * - `_failureIf="<script>"`: If true when node is IDLE, return FAILURE immediately (node's tick() is not called).
+ * - `_successIf="<script>"`: If true when node is IDLE, return SUCCESS immediately (node's tick() is not called).
+ * - `_skipIf="<script>"`: If true when node is IDLE, return SKIPPED immediately (node's tick() is not called).
+ * - `_while="<script>"`: Checked both on IDLE and RUNNING states.
+ *
+ *   If false when IDLE, return SKIPPED. If false when RUNNING, halt the node
+ *   and return SKIPPED. This is the only pre-condition that can interrupt
+ *   a running node.
+ * - `_onlyIf="<script>"`: If false when node is IDLE, return SKIPPED immediately
+ *   (the opposite of `_skipIf`).
+ * - `_onStart="<script>"`: Not a condition: the script is executed right before
+ *   the first tick() of the node, i.e. only if none of the pre-conditions above
+ *   returned a status.
+ *
+ * If you need a condition to be re-evaluated on every tick, use the
+ * `<Precondition>` decorator node with `else="RUNNING"` instead of these attributes.
+ */
 enum class PreCond
 {
-  // order of the enums also tell us the execution order
   FAILURE_IF = 0,
   SUCCESS_IF,
   SKIP_IF,
   WHILE_TRUE,
+  // new values are appended to the end to preserve ABI
+  ONLY_IF,
+  ON_START,
   COUNT_
 };
+
+static const std::array<std::string, 6> PreCondNames = {  //
+  "_failureIf", "_successIf", "_skipIf", "_while", "_onlyIf", "_onStart"
+};
+static_assert(PreCondNames.size() == size_t(PreCond::COUNT_),
+              "PreCondNames must have one entry per PreCond");
 
 enum class PostCond
 {
@@ -62,11 +99,17 @@ enum class PostCond
   COUNT_
 };
 
-template <>
-[[nodiscard]] std::string toStr<BT::PostCond>(const BT::PostCond& status);
+static const std::array<std::string, 4> PostCondNames = {  //
+  "_onHalted", "_onFailure", "_onSuccess", "_post"
+};
+static_assert(PostCondNames.size() == size_t(PostCond::COUNT_),
+              "PostCondNames must have one entry per PostCond");
 
 template <>
-[[nodiscard]] std::string toStr<BT::PreCond>(const BT::PreCond& status);
+[[nodiscard]] std::string toStr<BT::PostCond>(const BT::PostCond& cond);
+
+template <>
+[[nodiscard]] std::string toStr<BT::PreCond>(const BT::PreCond& cond);
 
 using ScriptingEnumsRegistry = std::unordered_map<std::string, int>;
 
@@ -84,9 +127,13 @@ struct NodeConfig
   // output ports
   PortsRemapping output_ports;
 
+  // Any other attributes found in the xml that are not parsed as ports
+  // or built-in identifier (e.g. anything with a leading '_')
+  NonPortAttributes other_attributes;
+
   const TreeNodeManifest* manifest = nullptr;
 
-  // Numberic unique identifier
+  // Numeric unique identifier
   uint16_t uid = 0;
   // Unique human-readable name, that encapsulate the subtree
   // hierarchy, for instance, given 2 nested trees, it should be:
@@ -179,6 +226,21 @@ public:
   [[nodiscard]] StatusChangeSubscriber
   subscribeToStatusChange(StatusChangeCallback callback);
 
+  /** Subscribe to writes to the blackboard key backing an input port.
+   * Unlike providedPorts(), this is an instance method: a callback may use
+   * node-specific state and getInput(). Retain the returned handle for as long
+   * as the callback should remain active. See Blackboard::subscribeToEntry()
+   * for threading and lifetime requirements.
+   *
+   * Constant inputs return an empty handle. Missing inputs, output-only ports
+   * and empty callbacks throw LogicError. Defaults and {=} remapping are
+   * supported. Changing the port mapping later does not rebind subscriptions.
+   * The subscription is bound to the blackboard entry, which is created with
+   * the port's type if it doesn't exist yet; unset() of the key drops it.
+   */
+  [[nodiscard]] Blackboard::EntryUpdatedSubscriber
+  subscribeToInputPort(const std::string& key, Blackboard::EntryUpdatedCallback callback);
+
   /** This method attaches to the TreeNode a callback with signature:
      *
      *     NodeStatus callback(TreeNode& node)
@@ -196,7 +258,7 @@ public:
    *     NodeStatus myCallback(TreeNode& node, NodeStatus status)
    *
    * This callback is executed AFTER the tick() and, if it returns SUCCESS or FAILURE,
-   * the value returned by the actual tick() is overriden with this one.
+   * the value returned by the actual tick() is overridden with this one.
    */
   void setPostTickFunction(PostTickCallback callback);
 
@@ -238,7 +300,7 @@ public:
 
   /**
    * @brief getInputStamped is similar to getInput(dey, destination),
-   * but it returne also the Timestamp object, that can be used to check if
+   * but it returns also the Timestamp object, that can be used to check if
    * a value was updated and when.
    *
    * @param key   the name of the port.
@@ -285,7 +347,7 @@ public:
    * @brief setOutput modifies the content of an Output port
    * @param key    the name of the port.
    * @param value  new value
-   * @return       valid Result, if succesful.
+   * @return       valid Result, if successful.
    */
   template <typename T>
   Result setOutput(const std::string& key, const T& value);
@@ -357,9 +419,9 @@ public:
     }
     else if constexpr(hasNodeNameCtor<DerivedT>())
     {
-      auto node_ptr = new DerivedT(name, args...);
+      auto node_ptr = std::make_unique<DerivedT>(name, args...);
       node_ptr->config() = config;
-      return std::unique_ptr<DerivedT>(node_ptr);
+      return node_ptr;
     }
   }
 
@@ -419,17 +481,25 @@ T TreeNode::parseString(const std::string& str) const
 {
   if constexpr(std::is_enum_v<T> && !std::is_same_v<T, NodeStatus>)
   {
-    auto it = config().enums->find(str);
-    // conversion available
-    if(it != config().enums->end())
+    // Check the ScriptingEnumsRegistry first, if available.
+    if(config().enums)
     {
-      return static_cast<T>(it->second);
+      auto it = config().enums->find(str);
+      if(it != config().enums->end())
+      {
+        return static_cast<T>(it->second);
+      }
     }
-    else
+    // Try numeric conversion (e.g. "2" for an enum value).
+    int tmp = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), tmp);
+    if(ec == std::errc() && ptr == str.data() + str.size())
     {
-      // hopefully str contains a number that can be parsed. May throw
-      return static_cast<T>(convertFromString<int>(str));
+      return static_cast<T>(tmp);
     }
+    // Fall back to convertFromString<T>, which uses a user-provided
+    // specialization if one exists. Issue #948.
+    return convertFromString<T>(str);
   }
   return convertFromString<T>(str);
 }
@@ -483,6 +553,27 @@ inline Expected<Timestamp> TreeNode::getInputStamped(const std::string& key,
     }
   }
 
+  // Helper lambda to parse string using the stored converter if available,
+  // otherwise fall back to convertFromString<T>. This fixes the plugin issue
+  // where convertFromString<T> specializations are not visible across shared
+  // library boundaries (issue #953).
+  auto parseStringWithConverter = [this, &key](const std::string& str) -> T {
+    if(config().manifest)
+    {
+      auto port_it = config().manifest->ports.find(key);
+      if(port_it != config().manifest->ports.end())
+      {
+        const auto& converter = port_it->second.converter();
+        if(converter)
+        {
+          return converter(str).template cast<T>();
+        }
+      }
+    }
+    // Fall back to parseString which calls convertFromString
+    return parseString<T>(str);
+  };
+
   auto blackboard_ptr = getRemappedKey(key, port_value_str);
   try
   {
@@ -491,7 +582,7 @@ inline Expected<Timestamp> TreeNode::getInputStamped(const std::string& key,
     {
       try
       {
-        destination = parseString<T>(port_value_str);
+        destination = parseStringWithConverter(port_value_str);
       }
       catch(std::exception& ex)
       {
@@ -523,11 +614,17 @@ inline Expected<Timestamp> TreeNode::getInputStamped(const std::string& key,
       {
         if(!std::is_same_v<T, std::string> && any_value.isString())
         {
-          destination = parseString<T>(any_value.cast<std::string>());
+          destination = parseStringWithConverter(any_value.cast<std::string>());
         }
         else
         {
-          destination = any_value.cast<T>();
+          auto result =
+              config().blackboard->tryCastWithPolymorphicFallback<T>(&any_value);
+          if(!result)
+          {
+            throw std::runtime_error(result.error());
+          }
+          destination = result.value();
         }
         return Timestamp{ entry->sequence_id, entry->stamp };
       }
@@ -585,7 +682,8 @@ inline Result TreeNode::setOutput(const std::string& key, const T& value)
 
   if constexpr(std::is_same_v<BT::Any, T>)
   {
-    if(config().manifest->ports.at(key).type() != typeid(BT::Any))
+    auto port_type = config().manifest->ports.at(key).type();
+    if(port_type != typeid(BT::Any) && port_type != typeid(BT::AnyTypeAllowed))
     {
       throw LogicError("setOutput<Any> is not allowed, unless the port "
                        "was declared using OutputPort<Any>");

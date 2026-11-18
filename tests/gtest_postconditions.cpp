@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
-#include <string>
 #include "behaviortree_cpp/basic_types.h"
 #include "behaviortree_cpp/bt_factory.h"
+
+#include <string>
+
+#include <gtest/gtest.h>
 
 using namespace BT;
 
@@ -81,7 +83,7 @@ TEST(PostConditions, Issue601)
 
   BehaviorTreeFactory factory;
   auto tree = factory.createTreeFromText(xml_text);
-  const auto status = tree.tickWhileRunning();
+  tree.tickWhileRunning();
 
   ASSERT_EQ(tree.rootBlackboard()->get<std::string>("test"), "halted");
 }

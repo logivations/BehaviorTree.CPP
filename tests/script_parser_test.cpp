@@ -1,112 +1,195 @@
-#include <gtest/gtest.h>
-
-#include "behaviortree_cpp/scripting/operators.hpp"
-#include "behaviortree_cpp/bt_factory.h"
-#include "../sample_nodes/dummy_nodes.h"
 #include "test_helper.hpp"
 
-#include <lexy/input/string_input.hpp>
+#include "behaviortree_cpp/bt_factory.h"
+#include "behaviortree_cpp/scripting/operators.hpp"
+
+#include <tuple>
+
+#include <gtest/gtest.h>
+
+#include "../sample_nodes/dummy_nodes.h"
+
+namespace
+{
 
 BT::Any GetScriptResult(BT::Ast::Environment& environment, const char* text)
 {
-  auto input = lexy::zstring_input<lexy::utf8_encoding>(text);
-  auto result = lexy::parse<BT::Grammar::stmt>(input, lexy_ext::report_error);
-
-  if(result.has_value())
-  {
-    auto exprs = LEXY_MOV(result).value();
-    for(auto i = 0u; i < exprs.size() - 1; ++i)
-    {
-      exprs[i]->evaluate(environment);
-    }
-    return exprs.back()->evaluate(environment);
-  }
-  else
+  auto exprs = BT::Scripting::parseStatements(text);
+  if(exprs.empty())
   {
     return {};
   }
+  for(size_t i = 0; i < exprs.size() - 1; ++i)
+  {
+    exprs[i]->evaluate(environment);
+  }
+  return exprs.back()->evaluate(environment);
 }
+
+}  // namespace
 
 TEST(ParserTest, AnyTypes)
 {
-  auto Parse = [](const char* str) {
-    return lexy::parse<BT::Grammar::AnyValue>(lexy::zstring_input(str),
-                                              lexy_ext::report_error);
-  };
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
 
   auto result = Parse("628");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), 628);
 
   result = Parse("-628");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), -628);
 
   result = Parse("0x100");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), 256);
 
   result = Parse("0X100");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), 256);
 
   result = Parse("3.14");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), 3.14);
 
   result = Parse("-3.14");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), -3.14);
 
   result = Parse("3.14e2");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), 314);
 
   result = Parse("3.14e-2");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), 0.0314);
 
   result = Parse("3e2");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), 300);
 
   result = Parse("3e-2");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<double>(), 0.03);
 
   result = Parse("'hello world '");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<std::string>(), "hello world ");
 
   result = Parse("true");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), 1);
 
   result = Parse("false");
-  EXPECT_TRUE(result.is_success());
+  EXPECT_TRUE(result.has_value());
   EXPECT_EQ(result.value().cast<int>(), 0);
 }
 
 TEST(ParserTest, AnyTypes_Failing)
 {
-  std::istringstream null_sink;
+  EXPECT_FALSE(BT::ValidateScript("0X100g"));
+  EXPECT_FALSE(BT::ValidateScript("0X100."));
+  EXPECT_FALSE(BT::ValidateScript("3foo"));
+  EXPECT_FALSE(BT::ValidateScript("65."));
+  EXPECT_FALSE(BT::ValidateScript("65.43foo"));
+  // "foo" is a valid identifier (parses as ExprName), only fails at
+  // evaluation when the variable doesn't exist.
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  EXPECT_FALSE(BT::ParseScriptAndExecute(env, "foo").has_value());
+}
 
-  auto Parse = [](const char* str) {
-    return lexy::parse<BT::Grammar::AnyValue>(lexy::zstring_input(str),
-                                              lexy_ext::report_error);
-  };
+TEST(ParserTest, IntegerLiteralOutOfRangeIsRejected)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
 
-  EXPECT_TRUE(!Parse("0X100g").is_success());
+  // These literals overflow int64_t. std::from_chars leaves its output untouched
+  // on result_out_of_range, so the parser used to accept them and silently
+  // evaluate the literal as 0 (e.g. the all-bits mask 0xFFFFFFFFFFFFFFFF).
+  EXPECT_FALSE(BT::ValidateScript("9223372036854775808"));  // INT64_MAX + 1
+  EXPECT_FALSE(BT::ValidateScript("99999999999999999999999"));
+  EXPECT_FALSE(BT::ValidateScript("0xFFFFFFFFFFFFFFFF"));
+  EXPECT_FALSE(BT::ValidateScript("0x8000000000000000"));
+  EXPECT_FALSE(BT::ParseScriptAndExecute(env, "0xFFFFFFFFFFFFFFFF").has_value());
 
-  EXPECT_TRUE(!Parse("0X100.").is_success());
+  // The boundary values that do fit must still parse and keep their value.
+  auto max_val = BT::ParseScriptAndExecute(env, "9223372036854775807");
+  ASSERT_TRUE(max_val.has_value());
+  EXPECT_EQ(max_val.value().cast<int64_t>(), 9223372036854775807LL);
 
-  EXPECT_TRUE(!Parse("3foo").is_success());
+  auto hex_val = BT::ParseScriptAndExecute(env, "0x7FFFFFFFFFFFFFFF");
+  ASSERT_TRUE(hex_val.has_value());
+  EXPECT_EQ(hex_val.value().cast<int64_t>(), 9223372036854775807LL);
+}
 
-  EXPECT_TRUE(!Parse("65.").is_success());
+TEST(ParserTest, DeeplyNestedScriptIsRejected)
+{
+  // A script with thousands of nested parentheses or unary prefixes used to add
+  // one recursion level per character and overflow the stack (SIGSEGV) at parse
+  // time. The parser now caps the nesting depth and returns an error instead.
+  const std::string deep_parens = std::string(20000, '(') + "0" + std::string(20000, ')');
+  EXPECT_FALSE(BT::ValidateScript(deep_parens));
 
-  EXPECT_TRUE(!Parse("65.43foo").is_success());
+  const std::string deep_unary = std::string(20000, '!') + "0";
+  EXPECT_FALSE(BT::ValidateScript(deep_unary));
 
-  EXPECT_TRUE(!Parse("foo").is_success());
+  // The depth cap must not reject ordinary scripts: a long flat expression is
+  // parsed iteratively (shallow recursion) and light nesting is well within it.
+  std::string wide = "1";
+  for(int i = 0; i < 200; ++i)
+  {
+    wide += "+1";
+  }
+  EXPECT_TRUE(BT::ValidateScript(wide));
+  EXPECT_TRUE(BT::ValidateScript("((((1))))"));
+}
+
+TEST(ParserTest, LongFlatScriptIsRejected)
+{
+  // A flat chain like "1+1+1+..." is parsed without recursion, but it builds a
+  // left-deep AST that is evaluated (and destroyed) recursively, one stack frame
+  // per operator. 100k terms used to overflow the stack (SIGSEGV) when executed.
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+
+  std::string flat = "x := 1";
+  for(int i = 0; i < 100000; ++i)
+  {
+    flat += "+1";
+  }
+  EXPECT_FALSE(BT::ValidateScript(flat));
+  EXPECT_FALSE(BT::ParseScriptAndExecute(env, flat).has_value());
+
+  // Nested chains add up as well: 100 levels of 20 operators each.
+  std::string nested_chain = "1";
+  for(int i = 0; i < 100; ++i)
+  {
+    nested_chain = "(" + nested_chain;
+    for(int j = 0; j < 20; ++j)
+    {
+      nested_chain += "+1";
+    }
+    nested_chain += ")";
+  }
+  EXPECT_FALSE(BT::ValidateScript(nested_chain));
+
+  // The limit is the same as the nesting depth (256): 300 terms are rejected.
+  std::string over = "1";
+  for(int i = 0; i < 300; ++i)
+  {
+    over += "+1";
+  }
+  EXPECT_FALSE(BT::ValidateScript(over));
+
+  // Ordinary long expressions are still accepted and evaluated.
+  std::string wide = "1";
+  for(int i = 0; i < 200; ++i)
+  {
+    wide += "+1";
+  }
+  auto result = BT::ParseScriptAndExecute(env, wide);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->cast<int>(), 201);
 }
 
 TEST(ParserTest, Equations)
@@ -119,7 +202,7 @@ TEST(ParserTest, Equations)
   //-------------------
   const auto& variables = environment.vars;
   EXPECT_EQ(GetResult("x:= 3; y:=5; x+y").cast<double>(), 8.0);
-  EXPECT_EQ(variables->getKeys().size(), 2);
+  EXPECT_EQ(variables->getKeyNames().size(), 2);
   EXPECT_EQ(variables->get<double>("x"), 3.0);
   EXPECT_EQ(variables->get<double>("y"), 5.0);
 
@@ -152,14 +235,14 @@ TEST(ParserTest, Equations)
   EXPECT_EQ(GetResult("y | x").cast<double>(), (5 | 3));
   EXPECT_EQ(GetResult("y ^ x").cast<double>(), (5 ^ 3));
 
-  EXPECT_ANY_THROW(auto res = GetResult("y ^ 5.1").cast<double>());
+  EXPECT_ANY_THROW(std::ignore = GetResult("y ^ 5.1").cast<double>());
 
   // test string variables
   EXPECT_EQ(GetResult("A:='hello'; B:=' '; C:='world'; A+B+C").cast<std::string>(), "hell"
                                                                                     "o "
                                                                                     "worl"
                                                                                     "d");
-  EXPECT_EQ(variables->getKeys().size(), 5);
+  EXPECT_EQ(variables->getKeyNames().size(), 5);
   EXPECT_EQ(variables->get<std::string>("A"), "hello");
   EXPECT_EQ(variables->get<std::string>("B"), " ");
   EXPECT_EQ(variables->get<std::string>("C"), "world");
@@ -170,7 +253,7 @@ TEST(ParserTest, Equations)
                          "C= 'left    '  ")
                    .empty());
 
-  EXPECT_EQ(variables->getKeys().size(), 5);
+  EXPECT_EQ(variables->getKeyNames().size(), 5);
   EXPECT_EQ(variables->get<std::string>("A"), "   right");
   EXPECT_EQ(variables->get<std::string>("B"), " center ");
   EXPECT_EQ(variables->get<std::string>("C"), "left    ");
@@ -185,9 +268,9 @@ TEST(ParserTest, Equations)
   EXPECT_ANY_THROW(GetResult(" 'hello' = 2.0 "));
   EXPECT_ANY_THROW(GetResult(" 3.0 = 2.0 "));
 
-  size_t prev_size = variables->getKeys().size();
+  size_t prev_size = variables->getKeyNames().size();
   EXPECT_ANY_THROW(GetResult("new_var=69"));
-  EXPECT_EQ(variables->getKeys().size(), prev_size);  // shouldn't increase
+  EXPECT_EQ(variables->getKeyNames().size(), prev_size);  // shouldn't increase
 
   // check comparisons
   EXPECT_EQ(GetResult("x < y").cast<int>(), 1);
@@ -234,6 +317,37 @@ TEST(ParserTest, Equations)
   // we expect string to be casted to number
   EXPECT_EQ(GetResult(" par1:='3'; par2:=3; par1==par2").cast<int>(), 1);
   EXPECT_EQ(GetResult(" par1:='3'; par2:=4; par1!=par2").cast<int>(), 1);
+}
+
+// Issue #1246: a numeric string mixed with a number is used as that number
+TEST(ParserTest, NumericStringArithmetic)
+{
+  BT::Ast::Environment environment = { BT::Blackboard::create(), {} };
+
+  auto GetResult = [&environment](const char* text) -> BT::Any {
+    return GetScriptResult(environment, text);
+  };
+  environment.vars->set("int_str", std::string("42"));
+  environment.vars->set("dbl_str", std::string("1.5"));
+  environment.vars->set("text", std::string("hello"));
+
+  EXPECT_EQ(GetResult("int_str + 1").cast<double>(), 43.0);
+  EXPECT_EQ(GetResult("1 + int_str").cast<double>(), 43.0);
+  EXPECT_EQ(GetResult("int_str - 2").cast<double>(), 40.0);
+  EXPECT_EQ(GetResult("int_str * 2").cast<double>(), 84.0);
+  EXPECT_EQ(GetResult("3 / dbl_str").cast<double>(), 2.0);
+  EXPECT_EQ(GetResult("'1e3' + 1").cast<double>(), 1001.0);
+
+  // the whole string must be a number
+  EXPECT_ANY_THROW(GetResult("text + 1"));
+  EXPECT_ANY_THROW(GetResult("'42abc' + 1"));
+  EXPECT_ANY_THROW(GetResult("'true' + 1"));
+  EXPECT_ANY_THROW(GetResult("' 42' + 1"));
+
+  // unchanged: two strings concatenate, bitwise operators require numbers
+  EXPECT_EQ(GetResult("int_str + int_str").cast<std::string>(), "4242");
+  EXPECT_EQ(GetResult("int_str .. 1").cast<std::string>(), "421");
+  EXPECT_ANY_THROW(GetResult("int_str & 1"));
 }
 
 TEST(ParserTest, NotInitializedComparison)
@@ -325,10 +439,11 @@ enum DeviceType
   CONTROLLER = 2
 };
 
+// NOLINTNEXTLINE(misc-use-anonymous-namespace,misc-use-internal-linkage)
 BT::NodeStatus checkLevel(BT::TreeNode& self)
 {
   double percent = self.getInput<double>("percentage").value();
-  DeviceType devType;
+  DeviceType devType{};
   auto res = self.getInput("deviceType", devType);
   if(!res)
   {
@@ -339,7 +454,6 @@ BT::NodeStatus checkLevel(BT::TreeNode& self)
   {
     self.setOutput("isLowBattery", (percent < 25));
   }
-  std::cout << "Device: " << devType << " Level: " << percent << std::endl;
   return BT::NodeStatus::SUCCESS;
 }
 
@@ -412,7 +526,7 @@ TEST(ParserTest, Issue595)
     </BehaviorTree>
   </root> )";
 
-  std::array<int, 1> counters;
+  std::array<int, 1> counters{};
   RegisterTestTick(factory, "Test", counters);
   factory.registerNodeType<SampleNode595>("SampleNode595");
 
@@ -423,6 +537,103 @@ TEST(ParserTest, Issue595)
   ASSERT_EQ(0, counters[0]);
 }
 
+// https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1029
+TEST(ParserTest, OperatorAssociativity_Issue1029)
+{
+  BT::Ast::Environment environment = { BT::Blackboard::create(), {} };
+
+  auto GetResult = [&environment](const char* text) -> BT::Any {
+    return GetScriptResult(environment, text);
+  };
+
+  // Addition and subtraction are left-associative:
+  // "5 - 2 + 1" should be (5-2)+1 = 4, NOT 5-(2+1) = 2
+  EXPECT_EQ(GetResult("5 - 2 + 1").cast<double>(), 4.0);
+
+  // "10 - 3 - 2" should be (10-3)-2 = 5, NOT 10-(3-2) = 9
+  EXPECT_EQ(GetResult("10 - 3 - 2").cast<double>(), 5.0);
+
+  // "2 + 3 - 1" should be (2+3)-1 = 4
+  EXPECT_EQ(GetResult("2 + 3 - 1").cast<double>(), 4.0);
+
+  // Multiplication and division are also left-associative:
+  // "12 / 3 / 2" should be (12/3)/2 = 2, NOT 12/(3/2) = 8
+  EXPECT_EQ(GetResult("12 / 3 / 2").cast<double>(), 2.0);
+
+  // "12 / 3 * 2" should be (12/3)*2 = 8, NOT 12/(3*2) = 2
+  EXPECT_EQ(GetResult("12 / 3 * 2").cast<double>(), 8.0);
+
+  // Mixed precedence: "2 + 3 * 4 - 1" should be 2+(3*4)-1 = 13
+  EXPECT_EQ(GetResult("2 + 3 * 4 - 1").cast<double>(), 13.0);
+
+  // Verify string concatenation operator (..) still works after operand fix
+  EXPECT_EQ(GetResult("A:='hello'; B:=' world'; A .. B").cast<std::string>(), "hello "
+                                                                              "world");
+  // Chained concatenation (left-associative)
+  EXPECT_EQ(GetResult("A .. ' ' .. B").cast<std::string>(), "hello  world");
+}
+
+// https://github.com/BehaviorTree/BehaviorTree.CPP/issues/923
+// Regression test: ValidateScript must not crash on large invalid scripts
+// that produce error messages exceeding any fixed-size buffer.
+TEST(ParserTest, ValidateScriptLargeError_Issue923)
+{
+  // Build an invalid script large enough to overflow the old 2048-byte buffer
+  std::string script;
+  for(int i = 0; i < 10; i++)
+  {
+    script += "+6e66>6666.6+66\r6>6;6e62=6+6e66>66666'; en';o';o'; en'; ";
+    script += "\x7f"
+              "n"
+              "\x7f"
+              "r;6.6+66.H>6+6"
+              "\x80"
+              "6"
+              "\x1e"
+              ";@e66";
+  }
+  // Must not crash (old code used a fixed char[2048] buffer causing OOB read)
+  auto result = BT::ValidateScript(script);
+  EXPECT_FALSE(result);  // invalid script, but no crash
+}
+
+// https://github.com/BehaviorTree/BehaviorTree.CPP/issues/832
+TEST(ParserTest, CompareWithNegativeNumber_Issue832)
+{
+  BT::Ast::Environment environment = { BT::Blackboard::create(), {} };
+
+  auto GetResult = [&environment](const char* text) -> BT::Any {
+    return GetScriptResult(environment, text);
+  };
+
+  // "A != -1" should parse and evaluate correctly
+  EXPECT_EQ(GetResult("A:=0; A!=-1").cast<int>(), 1);   // 0 != -1 is true
+  EXPECT_EQ(GetResult("A:=-1; A!=-1").cast<int>(), 0);  // -1 != -1 is false
+  EXPECT_EQ(GetResult("A:=0; A==-1").cast<int>(), 0);   // 0 == -1 is false
+  EXPECT_EQ(GetResult("A:=0; A>-1").cast<int>(), 1);    // 0 > -1 is true
+  EXPECT_EQ(GetResult("A:=0; A<-1").cast<int>(), 0);    // 0 < -1 is false
+
+  // Also test that ValidateScript accepts these expressions
+  EXPECT_TRUE(BT::ValidateScript("A:=0; A!=-1"));
+  EXPECT_TRUE(BT::ValidateScript("A:=0; A>-1"));
+
+  // Reproducer from the issue: precondition with negative literal
+  BT::BehaviorTreeFactory factory;
+  const std::string xml_text = R"(
+  <root BTCPP_format="4">
+      <BehaviorTree>
+         <Sequence>
+             <Script code=" A:=0 " />
+             <AlwaysSuccess _failureIf="A!=-1"/>
+         </Sequence>
+      </BehaviorTree>
+  </root>
+  )";
+  auto tree = factory.createTreeFromText(xml_text);
+  // A==0, so A!=-1 is true, meaning _failureIf triggers => FAILURE
+  auto status = tree.tickWhileRunning();
+  EXPECT_EQ(status, BT::NodeStatus::FAILURE);
+}
 TEST(ParserTest, NewLine)
 {
   BT::BehaviorTreeFactory factory;
@@ -440,4 +651,172 @@ TEST(ParserTest, NewLine)
   ASSERT_EQ(status, BT::NodeStatus::SUCCESS);
   ASSERT_EQ(tree.rootBlackboard()->get<int>("A"), 5);
   ASSERT_EQ(tree.rootBlackboard()->get<int>("B"), 6);
+}
+
+TEST(ParserTest, TokenizerEdgeCases)
+{
+  // Unterminated string
+  EXPECT_FALSE(BT::ValidateScript("'hello"));
+
+  // Hex edge cases
+  EXPECT_FALSE(BT::ValidateScript("0x"));
+  EXPECT_FALSE(BT::ValidateScript("0xG"));
+
+  // Exponent without digits
+  EXPECT_FALSE(BT::ValidateScript("3e"));
+  EXPECT_FALSE(BT::ValidateScript("3e+"));
+
+  // DotDot adjacent to integer: "65..66" should parse as 65 .. 66
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto result = BT::ParseScriptAndExecute(env, "A:='65'; B:='66'; A..B");
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value().cast<std::string>(), "6566");
+
+  // Empty and whitespace-only scripts
+  EXPECT_FALSE(BT::ValidateScript(""));
+  EXPECT_FALSE(BT::ValidateScript("   "));
+  EXPECT_FALSE(BT::ValidateScript("\t\n\r"));
+}
+
+TEST(ParserTest, ChainedComparisons)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  // 1 < 2 < 3 should be true (chained: 1<2 AND 2<3)
+  EXPECT_EQ(Parse("1 < 2 < 3").value().cast<int>(), 1);
+
+  // 3 > 2 > 1 should be true
+  EXPECT_EQ(Parse("3 > 2 > 1").value().cast<int>(), 1);
+
+  // 1 < 2 > 3 should be false (1<2 is true, but 2>3 is false)
+  EXPECT_EQ(Parse("1 < 2 > 3").value().cast<int>(), 0);
+
+  // Chained equality
+  EXPECT_EQ(Parse("5 == 5 == 5").value().cast<int>(), 1);
+  EXPECT_EQ(Parse("5 == 5 != 3").value().cast<int>(), 1);
+
+  // 1 <= 2 <= 3
+  EXPECT_EQ(Parse("1 <= 2 <= 3").value().cast<int>(), 1);
+
+  // 3 >= 2 >= 1
+  EXPECT_EQ(Parse("3 >= 2 >= 1").value().cast<int>(), 1);
+}
+
+TEST(ParserTest, OperatorPrecedence)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  // Bitwise AND binds tighter than bitwise OR
+  // 6 | 3 & 5 should be 6 | (3 & 5) = 6 | 1 = 7
+  EXPECT_EQ(Parse("6 | 3 & 5").value().cast<int>(), 7);
+
+  // Bitwise OR binds tighter than logical AND
+  // true && (6 | 0) should be true
+  EXPECT_EQ(Parse("true && (6 | 0)").value().cast<int>(), 1);
+
+  // Logical AND binds tighter than logical OR
+  // false || true && true should be false || (true && true) = true
+  EXPECT_EQ(Parse("false || true && true").value().cast<int>(), 1);
+
+  // false && true || true should be (false && true) || true = true
+  EXPECT_EQ(Parse("false && true || true").value().cast<int>(), 1);
+
+  // Parentheses override precedence
+  EXPECT_EQ(Parse("(2 + 3) * 4").value().cast<double>(), 20.0);
+  EXPECT_EQ(Parse("2 * (3 + 4)").value().cast<double>(), 14.0);
+}
+
+TEST(ParserTest, UnaryOperators)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  // Logical NOT
+  EXPECT_EQ(Parse("!true").value().cast<int>(), 0);
+  EXPECT_EQ(Parse("!false").value().cast<int>(), 1);
+  EXPECT_EQ(Parse("!!true").value().cast<int>(), 1);
+
+  // Bitwise complement
+  auto result = Parse("~0");
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value().cast<int64_t>(), ~int64_t(0));
+
+  // Unary minus
+  EXPECT_EQ(Parse("-(3 + 2)").value().cast<double>(), -5.0);
+
+  // Unary minus in expressions
+  EXPECT_EQ(Parse("10 + -3").value().cast<double>(), 7.0);
+}
+
+TEST(ParserTest, BitwiseComplementRejectsNonIntegers)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  // The operand was cast to int64_t after a hand-written range check that
+  // accepted NaN and exactly 2^63 (undefined conversion, reported by UBSan)
+  // and silently truncated fractional values.
+  EXPECT_FALSE(Parse("~(0.0 / 0.0)").has_value());
+  EXPECT_FALSE(Parse("~9223372036854775808.0").has_value());  // 2^63
+  EXPECT_FALSE(Parse("~1.5").has_value());
+  EXPECT_FALSE(Parse("~(1.0 / 0.0)").has_value());
+
+  // Integral values, including the int64_t boundaries, still work.
+  EXPECT_EQ(Parse("~0").value().cast<int64_t>(), ~int64_t(0));
+  EXPECT_EQ(Parse("~(2 * 3)").value().cast<int64_t>(), ~int64_t(6));
+  EXPECT_EQ(Parse("~-9223372036854775808.0").value().cast<double>(),
+            static_cast<double>(~std::numeric_limits<int64_t>::min()));
+}
+
+TEST(ParserTest, AssignStringWhileEntryIsUnset)
+{
+  auto bb = BT::Blackboard::create();
+  bb->set<int>("x", 1);
+  bb->set<std::string>("y", "");
+  BT::Ast::Environment env = { bb, {} };
+
+  // Writing y unsets x, after the assignment to x has already resolved its
+  // entry. The string to int conversion then used to look x up again and
+  // dereference the nullptr returned for the missing entry. Another thread
+  // calling unset() at the wrong time has the same effect.
+  auto subscriber = bb->subscribeToEntry("y", [&bb]() { bb->unset("x"); });
+
+  auto result = BT::ParseScriptAndExecute(env, "x = (y = '42')");
+  ASSERT_TRUE(result.has_value()) << result.error();
+  EXPECT_EQ(result.value().cast<int>(), 42);
+  EXPECT_EQ(bb->getEntry("x"), nullptr);
+}
+
+TEST(ParserTest, TernaryExpressions)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  EXPECT_EQ(Parse("true ? 1 : 2").value().cast<int>(), 1);
+  EXPECT_EQ(Parse("false ? 1 : 2").value().cast<int>(), 2);
+
+  // Ternary with expressions in branches
+  EXPECT_EQ(Parse("true ? 2 + 3 : 10").value().cast<double>(), 5.0);
+  EXPECT_EQ(Parse("false ? 10 : 2 + 3").value().cast<double>(), 5.0);
+
+  // Ternary with comparison as condition
+  EXPECT_EQ(Parse("3 > 2 ? 'yes' : 'no'").value().cast<std::string>(), "yes");
+  EXPECT_EQ(Parse("3 < 2 ? 'yes' : 'no'").value().cast<std::string>(), "no");
+}
+
+TEST(ParserTest, MultipleStatements)
+{
+  BT::Ast::Environment env = { BT::Blackboard::create(), {} };
+  auto Parse = [&env](const char* str) { return BT::ParseScriptAndExecute(env, str); };
+
+  // Multiple semicolons
+  Parse("a:=1;;; b:=2;;");
+  EXPECT_EQ(env.vars->get<double>("a"), 1.0);
+  EXPECT_EQ(env.vars->get<double>("b"), 2.0);
+
+  // Last expression is the return value
+  auto result = Parse("a:=10; b:=20; a+b");
+  EXPECT_EQ(result.value().cast<double>(), 30.0);
 }

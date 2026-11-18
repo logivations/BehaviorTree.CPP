@@ -1,9 +1,10 @@
 #pragma once
 
-#include <array>
-#include <future>
 #include "behaviortree_cpp/loggers/abstract_logger.h"
 #include "behaviortree_cpp/loggers/groot2_protocol.h"
+
+#include <array>
+#include <future>
 
 namespace BT
 {
@@ -14,25 +15,38 @@ namespace BT
  *
  * An inter-process communication mechanism allows the two processes
  * to communicate through a TCP port. The user should provide the
- * port to be used in the constructor.
+ * port to be used in the constructor. The publisher binds two ports:
+ * server_port and server_port + 1.
+ *
+ * SECURITY: the protocol has no authentication. Any client that can reach
+ * these ports can read the tree and its blackboards, and can insert hooks
+ * (breakpoints) that replace the result of a node, changing how the tree
+ * executes. Do not expose them to untrusted networks; use the bind_address
+ * argument to restrict the interface they listen on.
  */
 class Groot2Publisher : public StatusChangeLogger
 {
-  static std::mutex used_ports_mutex;
-  static std::set<unsigned> used_ports;
-
   using Position = Monitor::Hook::Position;
 
 public:
+  /// Listens on all network interfaces.
   Groot2Publisher(const BT::Tree& tree, unsigned server_port = 1667);
+
+  /**
+   * @param bind_address the interface to listen on, in ZeroMQ tcp syntax:
+   * an IPv4 address ("127.0.0.1" for local connections only), an
+   * interface name ("eth0"), or "*" for all interfaces.
+   */
+  Groot2Publisher(const BT::Tree& tree, unsigned server_port,
+                  const std::string& bind_address);
 
   ~Groot2Publisher() override;
 
   Groot2Publisher(const Groot2Publisher& other) = delete;
   Groot2Publisher& operator=(const Groot2Publisher& other) = delete;
 
-  Groot2Publisher(Groot2Publisher&& other) = default;
-  Groot2Publisher& operator=(Groot2Publisher&& other) = default;
+  Groot2Publisher(Groot2Publisher&& other) = delete;
+  Groot2Publisher& operator=(Groot2Publisher&& other) = delete;
 
   /**
    * @brief setMaxHeartbeatDelay is used to tell the publisher
@@ -57,7 +71,7 @@ private:
 
   void updateStatusBuffer();
 
-  std::vector<uint8_t> generateBlackboardsDump(const std::string& bb_list);
+  Expected<std::vector<uint8_t>> generateBlackboardsDump(const std::string& bb_list);
 
   bool insertHook(Monitor::Hook::Ptr breakpoint);
 

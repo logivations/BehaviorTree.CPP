@@ -4,6 +4,8 @@
 #include "behaviortree_cpp/behavior_tree.h"
 #include "behaviortree_cpp/bt_factory.h"
 
+#include <memory>
+
 namespace BT
 {
 enum class TimestampType
@@ -15,82 +17,54 @@ enum class TimestampType
 class StatusChangeLogger
 {
 public:
+  /// Construct and immediately subscribe to status changes.
   StatusChangeLogger(TreeNode* root_node);
-  virtual ~StatusChangeLogger() = default;
+
+  virtual ~StatusChangeLogger();
 
   StatusChangeLogger(const StatusChangeLogger& other) = delete;
   StatusChangeLogger& operator=(const StatusChangeLogger& other) = delete;
 
-  StatusChangeLogger(StatusChangeLogger&& other) = default;
-  StatusChangeLogger& operator=(StatusChangeLogger&& other) = default;
+  StatusChangeLogger(StatusChangeLogger&& other) = delete;
+  StatusChangeLogger& operator=(StatusChangeLogger&& other) = delete;
 
   virtual void callback(BT::Duration timestamp, const TreeNode& node,
                         NodeStatus prev_status, NodeStatus status) = 0;
 
   virtual void flush() = 0;
 
-  void setEnabled(bool enabled)
-  {
-    enabled_ = enabled;
-  }
+  void setEnabled(bool enabled);
 
-  void setTimestampType(TimestampType type)
-  {
-    type_ = type;
-  }
+  void setTimestampType(TimestampType type);
 
-  bool enabled() const
-  {
-    return enabled_;
-  }
+  bool enabled() const;
 
   // false by default.
-  bool showsTransitionToIdle() const
-  {
-    return show_transition_to_idle_;
-  }
+  bool showsTransitionToIdle() const;
 
-  void enableTransitionToIdle(bool enable)
-  {
-    show_transition_to_idle_ = enable;
-  }
+  void enableTransitionToIdle(bool enable);
+
+protected:
+  /// Default constructor for deferred subscription. Call subscribeToTreeChanges() when ready.
+  StatusChangeLogger();
+
+  /// Subscribe to status changes. Call at end of constructor for deferred subscription.
+  void subscribeToTreeChanges(TreeNode* root_node);
+
+  /// Stop new callbacks and wait until callbacks already in progress have completed.
+  /// Derived destructors must call this before destroying state used by callback().
+  void unsubscribeFromTreeChanges();
 
 private:
-  bool enabled_;
-  bool show_transition_to_idle_;
-  std::vector<TreeNode::StatusChangeSubscriber> subscribers_;
-  TimestampType type_;
-  BT::TimePoint first_timestamp_ = {};
+  /// Forward a status transition to callback(), unless disabled.
+  void handleStatusChange(TimePoint timestamp, const TreeNode& node, NodeStatus prev,
+                          NodeStatus status);
+
+  // All state lives behind this pointer, so that changing it does not alter the
+  // layout that derived classes (including user-defined loggers) compile against.
+  struct PImpl;
+  std::unique_ptr<PImpl> _p;
 };
-
-//--------------------------------------------
-
-inline StatusChangeLogger::StatusChangeLogger(TreeNode* root_node)
-  : enabled_(true), show_transition_to_idle_(true), type_(TimestampType::absolute)
-{
-  first_timestamp_ = std::chrono::high_resolution_clock::now();
-
-  auto subscribeCallback = [this](TimePoint timestamp, const TreeNode& node,
-                                  NodeStatus prev, NodeStatus status) {
-    if(enabled_ && (status != NodeStatus::IDLE || show_transition_to_idle_))
-    {
-      if(type_ == TimestampType::absolute)
-      {
-        this->callback(timestamp.time_since_epoch(), node, prev, status);
-      }
-      else
-      {
-        this->callback(timestamp - first_timestamp_, node, prev, status);
-      }
-    }
-  };
-
-  auto visitor = [this, subscribeCallback](TreeNode* node) {
-    subscribers_.push_back(node->subscribeToStatusChange(std::move(subscribeCallback)));
-  };
-
-  applyRecursiveVisitor(root_node, visitor);
-}
 }  // namespace BT
 
 #endif  // ABSTRACT_LOGGER_H

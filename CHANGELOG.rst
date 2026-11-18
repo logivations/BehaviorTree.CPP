@@ -2,6 +2,671 @@
 Changelog for package behaviortree_cpp
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+4.11.1 (2026-11-12)
+-------------------
+* Roll back a rejected XML load as a whole, and keep Tree's destructor from throwing (`#1289 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1289>`_)
+  Fixes `#1282 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1282>`_ and `#1281 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1281>`_.
+  * Behavior change: when a load call fails, the trees registered by its valid
+    <include> files are dropped too, and a tree it redefined gets its previous
+    definition back. Before, they stayed registered.
+  * Tree::~Tree() no longer calls std::terminate when halting throws (e.g. a TryCatch
+    with catch_on_halt="true"); the exception is printed to stderr.
+* Fix GCC 15 -Wnull-dereference in public headers; always build with -Werror (`#1290 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1290>`_)
+  Fixes `#1288 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1288>`_.
+  * The library, tests and examples always build with -Wall -Wextra -Wpedantic
+    -Wnull-dereference -Werror (MSVC: /W4 /WX). This applies only to in-tree
+    targets; it is not exported to downstream packages.
+  * Behavior change: JsonExporter throws LogicError when a BT::Any does not hold the
+    type its converter expects. Before, this was a null dereference (undefined behavior).
+* Contributors: Davide Faconti, Marco Matteo Bassa, 渠超胜
+
+4.11.0 (2026-11-08)
+-------------------
+* Feature: advanced xml validation (`#1146 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1146>`_)
+* add Finally control node for guaranteed cleanup (`#1229 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1229>`_)
+  * Behavior change: "Finally" is now a built-in node ID, so an application that
+    registers its own node with that ID gets a duplicate-registration error.
+* Add _onlyIf and _onStart preconditions (`#820 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/820>`_, `#895 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/895>`_) (`#1261 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1261>`_)
+  * Behavior change: the attribute names `_onlyIf` and `_onStart` are now reserved.
+    Before, they were stored silently as non-port attributes and did nothing.
+* test: don't assume a tick rate in Reactive.TestLogging (`#1285 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1285>`_)
+* null-check the entry in ImportBlackboardFromJSON after createEntry (`#1284 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1284>`_)
+* Restore 4.10.0 ABI of Sleep/Delay/Timeout nodes; ignore stale timer handlers (`#1283 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1283>`_)
+* add unit test for subtree with default values and autoremap enabled (`#1272 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1272>`_)
+  * Behavior change: for a modelled input port with a literal default that is not
+    explicitly remapped, the default is now set in the SubTree blackboard if no entry with
+    that name exists in the parent blackboard when the tree is created (creation-time
+    rule, documented in PORT_CONNECTION_RULES.md). A parent key created only at runtime
+    (e.g. by a Script) is shadowed by the default.
+* bound the AST height of flat script expressions (`#1259 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1259>`_)
+  * Behavior change: a single script expression with more than ~255 chained operators is
+    now rejected when the tree is created.
+* reset a child's status when its halt() throws in ControlNode::haltChild (`#1273 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1273>`_)
+* OSS-Fuzz: Add new fuzzer/corpus/dict targets tree exec (`#1277 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1277>`_)
+* fix: bad_expected_access::what() returns the error message (`#1269 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1269>`_)
+* Propagate skipped conditions in IfThenElse and WhileDoElse (`#1276 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1276>`_)
+* Reset Precondition state between activations (`#1275 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1275>`_)
+* forget a rejected XML document in XMLParser (`#1266 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1266>`_)
+* ignore aborted timer handler in SleepNode (`#1267 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1267>`_)
+* fix stack overflow on nested JSON in JsonToInteger and fromJson (`#1274 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1274>`_)
+* make wildcards_match iterative to avoid stack overflow (`#1270 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1270>`_)
+* use the locked entry in script assignment string conversion (`#1265 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1265>`_)
+* Sort ports in the TreeNodesModel XML (`#851 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/851>`_) (`#1260 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1260>`_)
+* fix: keep the name of SubTree nodes in WriteTreeToXML (`#1262 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1262>`_) (`#1268 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1268>`_)
+* Bump prefix-dev/setup-pixi from 0.11.2 to 0.11.3 (`#1280 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1280>`_)
+* feat: write the library version as BTCPP_version in the <root> of generated XML (`#1264 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1264>`_)
+* test: a reactive node must not restart its RUNNING child (`#1258 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1258>`_)
+* Add input port update subscriptions (`#1247 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1247>`_)
+* store SubTree literals as strings again; coerce numeric strings in script arithmetic (`#1246 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1246>`_) (`#1254 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1254>`_)
+  * Behavior change compared to 4.9.1 - 4.10.0, back to pre-4.9.1 behavior: two literal
+    operands are strings ("1" + "2" is "12", "10" < "2" compares text), and compound
+    assignment, unary minus, bitwise and logic operators on such a literal require an
+    explicit number again.
+* Allow a custom "__type" name in the JsonExporter lambda converters (`#1255 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1255>`_)
+* Document the MSVC timer resolution caveat of Tree::sleep (`#1257 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1257>`_)
+* Include emscripten/fiber.h at global scope before minicoro.h (`#1256 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1256>`_)
+* clang-format: never split string literals (`#1253 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1253>`_)
+* Warn when a BehaviorTree ID replaces one registered from another source (`#1133 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1133>`_)
+  * Behavior change: a new "Warning: BehaviorTree ID [...] replaces ..." line on stdout in
+    the cases above; no other change.
+* Fix Reactive Sequence async control node validation (`#1183 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1183>`_)
+  * Behavior change: a ReactiveSequence with two or more direct children among
+    AsyncSequence / AsyncFallback, at least one of them an AsyncFallback, now fails to
+    load, like two AsyncSequence already did.
+* pixi: bound the parallel build on Linux (`#1252 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1252>`_)
+* reject non-integer JSON numbers where an integer is expected (`#1240 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1240>`_)
+  * Behavior change: int-vector elements, async_delay and Groot2 hook fields that are
+    fractional, NaN, boolean or out of range now throw instead of being silently truncated
+    or wrapped.
+* reject out-of-range values in the double to float conversions (`#1249 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1249>`_)
+  * Behavior change: reading a finite double with |x| >= FLT_MAX + half an ulp as float
+    now throws instead of returning an infinity.
+* throw instead of wrapping the 16-bit UID counter in Tree::getUID (`#1244 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1244>`_)
+  * Behavior change: creating a tree with more than 65535 nodes now throws instead of
+    succeeding with duplicate UIDs.
+* fix overflow in the integer to floating point safe-cast checks (`#1238 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1238>`_)
+* range-check uint16_t in the Any string to number fallback (`#1242 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1242>`_)
+* fix null _p access in the TestNode async_delay timer handler (`#1243 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1243>`_)
+* fix TimeoutNode halting the child concurrently with its timer thread (`#1241 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1241>`_)
+* Bump prefix-dev/setup-pixi from 0.10.1 to 0.11.2 (`#1245 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1245>`_)
+* Groot2Publisher: add a constructor that takes the bind address (`#1251 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1251>`_)
+* XMLParser: detect cyclic <include> instead of overflowing the stack (`#1250 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1250>`_)
+* TreeObserver: don't throw when two nodes have the same path (`#1234 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1234>`_)
+* fix data race in SetBlackboardNode copying a blackboard entry (`#1236 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1236>`_)
+* fix data race in SqliteLogger::callback (`#1237 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1237>`_)
+* fix undefined double to int64 cast in the script complement operator (`#1239 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1239>`_)
+* Add USE_VENDORED_JSON option to use the system nlohmann_json (fixes `#959 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/959>`_) (`#1235 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1235>`_)
+* Validate model names in explicit XML node syntax (fixes `#1220 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1220>`_) (`#1231 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1231>`_)
+  * Behavior change: the ID of explicit <Action>, <Condition>, <Decorator> and <Control>
+    elements is now checked with the same model-name rules as the compact form, so an ID
+    with a forbidden character (e.g. ID="My.Action") or the reserved name Root, which
+    loaded before, now throws.
+* fuzzing: don't return 1 from bb_fuzzer on unexpected exceptions (fixes `#1224 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1224>`_) (`#1233 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1233>`_)
+* apply type checks in Blackboard::set when the key is remapped (`#1232 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1232>`_)
+  * Behavior change: writes through a SubTree remapping now follow the same type rules as
+    local writes. An unconvertible string written into a strongly typed parent entry
+    throws instead of being stored as a std::string, and a remapped write locks the type
+    of a weakly typed (AnyTypeAllowed) parent entry, as a local write already did.
+* Report a declared port whose name cannot be bound (fixes `#1215 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1215>`_) (`#1216 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1216>`_)
+* match subtrees by name in ImportTreeFromJSON (`#1227 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1227>`_)
+* fix SimpleString equality for content with embedded NUL bytes (`#1230 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1230>`_)
+* check from_chars result for integer literals in script parser (`#1214 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1214>`_)
+* clamp snprintf result before using it as fwrite length (`#1185 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1185>`_)
+* fix locale-dependent std::stod fallback in Any and SwitchNode (`#1218 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1218>`_)
+* Say that duplicate SubTree names are checked across the whole tree (fixes `#1219 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1219>`_) (`#1222 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1222>`_)
+* Name the forbidden character in the port name error (fixes `#1221 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1221>`_) (`#1223 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1223>`_)
+* Bump actions/setup-python from 6 to 7 (`#1179 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1179>`_)
+* DecoratorNode: don't discard the result of an asynchronous child (`#1206 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1206>`_)
+* CI: run the Windows tests through ctest with --repeat until-pass (`#1205 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1205>`_)
+* docs: clarify that Precondition is evaluated once per activation, not every tick (`#1204 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1204>`_)
+* add Blackboard::getKeyNames() and deprecate getKeys() (`#1203 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1203>`_)
+* fix use-after-free of a blackboard entry held by getAnyLocked (alternative to `#1181 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1181>`_) (`#1202 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1202>`_)
+* Bump prefix-dev/setup-pixi from 0.10.0 to 0.10.1 (`#1190 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1190>`_)
+* haltTree() from another thread now stops tickWhileRunning() (fixes `#686 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/686>`_) (`#1201 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1201>`_)
+* fix FileLogger2: drain the transition queue in the destructor after joining the writer thread (`#1198 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1198>`_)
+* fix TimerQueue shutdown race that left cancelled items in the queue (`#1200 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1200>`_)
+* validate substituted node type in instantiateTreeNode (`#1193 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1193>`_)
+* fix: typo Slop->Slot and mark Signal::subscribe() [[nodiscard]] (`#1199 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1199>`_)
+* Fix logical not for string-backed booleans (`#1191 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1191>`_)
+* preserve integer width in JsonExporter::fromJson (`#1186 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1186>`_)
+* fix use-after-free of the timer node mutex on destruction (`#1180 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1180>`_)
+* fix unbounded recursion in the script expression parser (`#1174 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1174>`_)
+* Fix library version in CMake subprojects (`#1188 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1188>`_)
+* fix @ root remapping in Blackboard::createEntryImpl (`#1192 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1192>`_)
+* validate backup size in BlackboardRestore (`#1182 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1182>`_)
+* Contributors: Arthur Chan, Aysha Afrah Ziya, Azer Ben Ali, DV (David Vadovszki), Davide Faconti, Golitsin Vyacheslav, Igor Stadnyk, Jonas Otto, KImanalieva, Lim Jooyoung, Nikola Kachmaryk, Varun Kumar, Victor Voronin, dependabot[bot], ktyang, simobenziane
+
+4.10.0 (2026-07-24)
+-------------------
+* reject trailing characters in SwitchNode numeric comparison (`#1178 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1178>`_)
+* Pin ament install destinations to lib/include/bin (fixes `#1175 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1175>`_) (`#1176 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1176>`_)
+  The ROS build farm (bloom/debhelper) configures with
+  -DCMAKE_INSTALL_LIBDIR=lib/<multiarch-triplet>. Since `#1152 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1152>`_ made the
+  BTCPP\_*_DESTINATION variables honor GNUInstallDirs, farm binaries
+  installed libbehaviortree_cpp.so to /opt/ros/<distro>/lib/x86_64-linux-gnu,
+  which breaks ament_export_libraries lookup in downstream packages and is
+  not on the LD_LIBRARY_PATH set by the ament environment hooks.
+  Shadow the cache variables with plain set() in the ament build path, so
+  ROS builds always install to $prefix/lib regardless of
+  CMAKE_INSTALL_LIBDIR, while standalone builds keep the GNUInstallDirs
+  override behavior introduced for `#1120 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1120>`_.
+  Also add a ros2-lyrical CI job that emulates the build farm flags and
+  asserts the library lands in $prefix/lib.
+  Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+* fix out-of-bounds read in Groot2 hook insert handler (`#1170 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1170>`_)
+  * fix out-of-bounds read in Groot2 hook insert handler
+  * exclude Parallel.FailingParallel from macOS CI test run
+* Add scripted return status support for TestNode mocks (`#1169 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1169>`_)
+  Introduce `return_status_script` on TestNodeConfig, allowing a mock's
+  completion status to be computed at runtime from blackboard state instead
+  of being fixed. When set, it takes precedence over `return_status`; it may
+  reference the NodeStatus names (SUCCESS/FAILURE/...) and is rejected if it
+  resolves to IDLE.
+  The NodeStatus enum names are injected only into the return_status_script
+  environment. The pre-existing success_script/failure_script/post_script
+  continue to evaluate against the node's own enums, so a blackboard entry
+  named like a status (e.g. "SUCCESS") is not shadowed.
+  To pay the ABI break only once, TestNode's state is moved behind a PImpl,
+  so future changes to it no longer alter the layout consumers link against
+  (mirroring StatusChangeLogger). The new return_status_script field is
+  appended at the end of TestNodeConfig, preserving the byte offsets of the
+  existing fields.
+  Also add JSON validation rejecting a TestNodeConfig with neither a
+  return_status nor a return_status_script, and a tutorial example
+  (t15_nodes_mocking_strict_failure) demonstrating the strict-failure flow.
+  Addresses `#995 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/995>`_.
+  Co-authored-by: Pepe <pepe@ross-robotics.co.uk>
+  Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+* Fix ROOT blackboard export in Groot2 publisher (`#1132 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1132>`_) (`#1168 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1168>`_)
+  When a subtree's blackboard is backed by a separate root blackboard
+  (e.g. created via `Blackboard::create(external_root)` to expose `@`
+  globals), the Groot2 publisher never exported those root entries, so
+  they were invisible in Groot2. Export the root blackboard under the
+  reserved name `ROOT` whenever a requested subtree resolves to a
+  distinct root blackboard.
+  - Deduplicate the `ROOT` payload when several subtrees share the same
+  root blackboard.
+  - Return the dump as `Expected<>` and send an error reply for
+  ambiguous requests: a subtree literally named `ROOT`, or a request
+  spanning multiple distinct root blackboards.
+  - Add functional coverage to gtest_groot2_publisher_integration.cpp
+  using the shared Groot2Test helpers (makePublisher/Client).
+  - Enable `/utf-8` for behaviortree_cpp_test on MSVC so the Unicode
+  name-validation tests build on Windows.
+  Closes `#1130 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1130>`_
+  Co-authored-by: magic-alt <zaqwerss@outlook.com>
+  Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+* Add macOS CI and fix Apple libc++ build (`#1167 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1167>`_)
+  * Add macOS build to CI
+  Add a Conan + CMake workflow running on macos-latest (Apple Silicon,
+  AppleClang + libc++). This exercises the Apple standard-library toolchain
+  that other CI jobs (Ubuntu/GCC, Windows/MSVC, conda/Clang) do not, catching
+  Apple-specific breakage such as the missing floating-point std::from_chars.
+  The job mirrors the existing cmake_ubuntu.yml Conan flow (conan install ->
+  cmake --preset conan-release -> ctest), pinning compiler.cppstd=17 as the
+  Windows job does.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Fix Apple libc++ build: guard floating-point std::from_chars
+  Apple's libc++ deletes the floating-point std::from_chars overload (and
+  undefines __cpp_lib_to_chars), so the unguarded double parse in
+  recursivelyCreateSubtree fails to compile on macOS. This is the same code
+  path the new cmake_macos.yml CI job exercises, so guard it here to keep that
+  job green.
+  Introduce parseDoubleStrict(), which uses std::from_chars where available and,
+  where it is not (Apple libc++), falls back to strtod_l with a "C" locale
+  created once. Unlike setlocale(), this does not mutate process-global state,
+  so it is thread-safe. A small guard rejects the inputs strtod would accept but
+  std::from_chars(general) rejects -- leading whitespace, a leading '+', and hex
+  floats -- so the parsed blackboard-entry type is identical on every platform.
+  Verified byte-for-byte against std::from_chars over a battery of inputs
+  (including "+1.5", " 1.5", "0x1p4", "1.", ".5", inf/nan, overflow/underflow).
+  The integer std::from_chars just above is available on Apple libc++ and is
+  left unchanged.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * CI: install Conan via Homebrew on macOS
+  turtlebrowser/get-conan runs `pip3 install`, which fails on macOS runners with
+  PEP 668 (externally-managed-environment). Use `brew install conan` instead,
+  which provides Conan 2.x without touching the system Python.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Fix convertFromString<double/float> error type on Apple libc++
+  On platforms without floating-point std::from_chars (Apple libc++), the
+  fallback used std::stod but let its std::invalid_argument/out_of_range escape,
+  whereas the from_chars path throws BT::RuntimeError. This made
+  BasicTypes.ConvertFromString_Double fail on macOS (it expects RuntimeError for
+  "not_a_number"). The throw also skipped the setlocale restore, leaking the "C"
+  locale process-wide. Wrap stod in try/catch: restore the locale and rethrow as
+  RuntimeError on both success and failure paths.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * CI: macOS diagnostics for remaining test failures (temporary)
+  Add --output-on-failure and an lldb backtrace step (on failure) to capture
+  assertion messages and stack traces for the macOS-only segfaults/timeouts.
+  To be removed once those are fixed.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Fix macOS segfault: don't touch child in DelayNode destructor
+  ~DelayNode called halt(), which via DecoratorNode::halt() -> resetChild()
+  dereferences the child node (child_node\_->status()). During Tree destruction
+  nodes are owned by a flat std::vector<TreeNode::Ptr> whose element-destruction
+  order is unspecified: libstdc++ tears down front-to-back (child outlives the
+  decorator) but libc++ back-to-front (child destroyed first). On libc++ (macOS)
+  the child is already gone, so status() locks a mutex through a null PImpl and
+  segfaults. This crashed every tree containing a <Delay> node on macOS
+  (Decorator.DelayWithXML and the Substitution Issue930 tests).
+  Only cancel the timer in the destructor, mirroring TimeoutNode's destructor,
+  which already does exactly this. The halt() method is unchanged for normal
+  (non-destruction) halting.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * CI: retry timing-flaky tests on macOS (--repeat until-pass:3)
+  The shared macOS runners cannot reliably meet several tests' tight wall-clock
+  tolerances (e.g. elapsed 222 vs 200 ms), and the failing set varies run to run.
+  Retry to absorb the flakiness without loosening assertions on other platforms.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * tests: widen timing tolerances on macOS (platform-gated)
+  The shared macOS CI runners are much slower/noisier than Linux/Windows, so a
+  few tests with tight wall-clock tolerances fail there (not library bugs). Gate
+  the tolerances behind __APPLE_\_ so other platforms keep the strict values:
+  - gtest_coroutines: scale the sub-50ms action/timeout durations by 5x on macOS
+  (only relative ordering matters), so the timeout reliably fires between the
+  short and long actions instead of racing scheduling jitter.
+  - gtest_parallel PauseWithRetry: widen margin_msec 80 -> 250 on macOS
+  (observed overshoot was 130-150ms).
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * CI: bump macOS test retries to until-pass:5
+  A couple of timing tests (Parallel.Issue819, SwitchTest.CaseSwitchToDefault)
+  are flaky under runner load rather than consistently over a single tolerance,
+  so retry a bit more to absorb that.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * CI: exclude timing-flaky tests on macOS; drop lldb diagnostic
+  The shared macOS runners are too slow/noisy to reliably meet the tight
+  wall-clock tolerances in ~11 tests (a rotating subset fails each run). They are
+  not macOS-specific logic and keep running on Linux and Windows, so exclude them
+  on macOS with ctest -E to make the job deterministic. --repeat until-pass:3
+  absorbs residual flakiness in the rest. The __APPLE_\_-gated tolerances added
+  earlier (gtest_coroutines, gtest_parallel) remain so these can be re-enabled
+  here later.
+  Also remove the temporary lldb backtrace step now that the DelayNode
+  destruction segfault is fixed.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Revert macOS timing-margin edits; rely on exclusion only
+  Since the timing-sensitive tests are excluded on macOS (ctest -E), there is no
+  reason to also widen their wall-clock tolerances. Restore gtest_coroutines.cpp
+  and gtest_parallel.cpp to their original values so the shared tests stay
+  pristine for every platform, and drop the stale workflow comment that mentioned
+  the __APPLE_\_-gated tolerances.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Simplify: dedup convertFromString double/float Apple fallback
+  /simplify cleanup. The macOS (no floating-point std::from_chars) fallback was
+  duplicated between convertFromString<double> and <float>, each restoring the
+  locale twice (catch + fall-through). Extract a single guarded file-local helper
+  stodClassicLocale() with an RAII locale-restore, so the fallback lives in one
+  place and the restore happens on every path without the duplicated try/catch.
+  Behavior is unchanged (still stod under a temporary "C" locale, still throws
+  RuntimeError on bad input).
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  * Unify double parsing into a single BT::parseDouble primitive
+  Previously the "parse a double locale-independently" logic existed in two
+  divergent forms: xml_parsing.cpp's parseDoubleStrict (from_chars, or strtod_l +
+  "C" locale on Apple libc++ -- thread-safe, strict) and basic_types.cpp's
+  convertFromString<double>/<float> Apple fallback (stod + global setlocale --
+  thread-unsafe, lenient). They also disagreed on Apple: convertFromString
+  accepted leading '+'/whitespace/hex that std::from_chars (and thus the other
+  platforms) reject.
+  Extract one shared BT::parseDouble(str, out, require_full_consumption) that both
+  build on:
+  - xml_parsing passes require_full_consumption=true (strict full-string check,
+  so compound values like "2.2;2.4" stay strings).
+  - convertFromString<double>/<float> pass false (lenient, matching the previous
+  from_chars behavior of accepting trailing characters).
+  The single implementation uses std::from_chars where available and the
+  thread-safe strtod_l + static "C" locale fallback otherwise, reproducing
+  from_chars(general) semantics exactly (verified against std::from_chars over a
+  battery of inputs, both modes). This removes the duplicated fallback and the
+  thread-unsafe setlocale path from basic_types.cpp. On Apple, convertFromString
+  now rejects '+'/whitespace/hex, matching Linux/Windows.
+  convertFromString<float> keeps std::from_chars<float> on platforms that have it
+  (preserving float-range semantics) and uses parseDouble only on the fallback.
+  Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+  ---------
+  Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>
+* test(test_node): cover script enum resolution (`#1166 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1166>`_)
+* Fix Groot2 publisher thread safety and hook handling (`#1165 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1165>`_)
+  * Fix Groot2 publisher thread safety
+  * Simplify Groot2 publisher thread-safety machinery
+  Apply code-review cleanups to the thread-safety fix:
+  - Extract the duplicated callback drain-gate (CallbackState/CallbackGuard
+  and HookCallbackState/HookCallbackGuard were byte-identical) into a
+  single shared BT::details::CallbackGate in utils/callback_gate.h.
+  notify_all() now fires only when a drain is actually waiting.
+  - Replace the 69-line injected hook lambda and its immediately-invoked
+  inner lambda with PImpl::runHook(). The BREAKPOINT_REACHED message is
+  now built and sent without holding hook->mutex, and only the ZMQ send
+  holds publisher_mutex.
+  - Drop the Hook::removed tombstone from the public protocol header:
+  with the single lock order established (hooks_map_mutex before
+  hook->mutex), enableAllHooks() and HOOKS_DUMP traverse the maps under
+  hooks_map_mutex, so no stale snapshot can resurrect an erased hook and
+  'enabled = false' suffices for stale callback copies.
+  - GET_TRANSITIONS: swap the transitions buffer out under status_mutex
+  and serialize outside the lock the status callback contends on.
+  - Call unsubscribeFromTreeChanges() in the destructors of the five other
+  StatusChangeLogger subclasses; the base-class destructor call runs too
+  late to protect derived state, so each dtor must drain callbacks first.
+  - Deduplicate the hook-JSON literals in the Groot2 tests into
+  Groot2Test::makeHook(); use make_unique for PImpl; rely on CTAD for
+  lock guards in touched code.
+  Verified: 495/495 tests (Release), 499/499 under TSan with the CI
+  suppressions file, zero ThreadSanitizer warnings.
+  Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+  * Extend TSan suppressions to statically linked ZeroMQ
+  CI builds zmq from source with Conan and links it statically, so the
+  module-based rule 'race:libzmq.so' does not match and zmq-internal
+  false positives (encoder_base_t::encode, msg_t::close) fail the
+  Groot2 hook tests. Match the zmq namespace instead, which works
+  regardless of how the library is linked.
+  Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+  * Move StatusChangeLogger state behind a PImpl
+  StatusChangeLogger is the base class of a public extension point: every
+  logger, including user-defined ones, embeds its layout. The thread-safety
+  fix already changes that layout (and, being header-only, the old inlined
+  implementation survives in consumer binaries even after a library
+  upgrade), so take the opportunity to pay the ABI break only once:
+  - all data members move into a PImpl defined in the new
+  src/loggers/abstract_logger.cpp
+  - the member functions are no longer inline, so future behavior fixes in
+  this class can ship as an ABI-compatible library update
+  Adding or changing state in StatusChangeLogger no longer affects the
+  layout derived classes compile against. Note that changing its virtual
+  interface would still break ABI.
+  Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+  ---------
+  Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+* fix undefined float-to-integer cast at the numeric limit boundary (`#1162 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1162>`_)
+* fix out-of-bounds read in isBlackboardPointer whitespace trim (`#1161 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1161>`_)
+  Co-authored-by: Davide Faconti <davide.faconti@gmail.com>
+* Fix package share path API for newer ament_index_cpp (`#1163 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1163>`_)
+  * Fix package share path API for newer ament_index_cpp
+  * Style: format package share path update
+  ---------
+  Co-authored-by: Davide Faconti <davide.faconti@gmail.com>
+* Fix WakeUp test flakiness by using steady_clock (`#1164 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1164>`_)
+  The `WakeUp.BasicTest` previously used `system_clock`, which is not monotonic and can be affected by system time adjustments (NTP, DST). This made the test susceptible to flaky failures.
+  This change switches to `steady_clock` for robust, monotonic time measurement. Additionally, the assertion threshold is increased from `25ms` to `100ms` to provide adequate headroom for scheduler jitter, especially on loaded CI environments.
+* Contributors: Aysha Afrah Ziya, Davide Faconti, Maurice Alexander Purnawan, pepeRossRobotics
+
+4.9.1 (2026-07-06)
+------------------
+* Merge pull request `#1139 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1139>`_ from mini-1235/patch-3
+  Fix -Wfree-nonheap-object and -Wunused-result
+* Fix -Wfree-nonheap-object and -Wnull-dereference
+* Merge pull request `#1128 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1128>`_ from XinyuKhan/patch-1
+  Rename header guard for shared_library.h
+* Rename header guard for shared_library.h
+* Merge pull request `#1126 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1126>`_ from BehaviorTree/dependabot/github_actions/prefix-dev/setup-pixi-0.9.5
+  Bump prefix-dev/setup-pixi from 0.9.4 to 0.9.5
+* Merge pull request `#1127 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1127>`_ from botsandus/add-sleep-override
+  Add `Tree::wakeUpSignal()` getter
+* Merge pull request `#1121 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1121>`_ from PickNikRobotics/fix-subtree-literal-numeric-types
+  Preserve numeric types for literal subtree port values
+* version 2
+* lint
+* Add support for custom sleep override function in Tree class
+* Bump prefix-dev/setup-pixi from 0.9.4 to 0.9.5
+  Bumps [prefix-dev/setup-pixi](https://github.com/prefix-dev/setup-pixi) from 0.9.4 to 0.9.5.
+  - [Release notes](https://github.com/prefix-dev/setup-pixi/releases)
+  - [Commits](https://github.com/prefix-dev/setup-pixi/compare/v0.9.4...v0.9.5)
+  ---
+  updated-dependencies:
+  - dependency-name: prefix-dev/setup-pixi
+  dependency-version: 0.9.5
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+  ...
+* Preserve numeric types for literal subtree port values
+  When literal values are passed to SubTree ports (not blackboard remapping),
+  detect numeric types (int64_t, double) before storing them in the child
+  blackboard. Previously all literals were stored as std::string, which caused
+  type-mismatch errors in Script expressions that tried to do arithmetic.
+  Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+* Contributors: Davide Faconti, Ladislav Skvarka, Tony Najjar, Xinyu Han, dependabot[bot], mini-1235
+
+4.9.0 (2026-02-11)
+------------------
+* Fix Blackboard thread-safety: 6 data races fixed, use shared_mutex for storage
+* Fix XML parser null pointer dereference in loadSubtreeModel on missing SubTree ID
+* Add TryCatch control node for try/catch recovery patterns
+* Fix `#1111 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1111>`_: EntryUpdatedDecorator::halt() not halting its child (`#1112 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1112>`_)
+* Add polymorphic shared_ptr port support (`#943 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/943>`_) (`#1107 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1107>`_)
+* Fix `std::from_chars` compilation on older g++ versions (`#1110 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1110>`_)
+* Fix clang-tidy warnings across tests, examples, and samples (`#1109 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1109>`_)
+* Add exception tracking with node backtrace (`#990 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/990>`_) (`#1106 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1106>`_)
+* Fix `#861 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/861>`_
+* Fix `#917 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/917>`_: add comments about preconditions
+* Fix missing read_parameter_from_ports initialization in DelayNode (`#1103 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1103>`_)
+* Fix `#880 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/880>`_: createTreeFromText now finds previously registered subtrees (`#1105 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1105>`_)
+* Remove lexy dependency, replace with hand-written tokenizer and Pratt parser (`#1099 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1099>`_)
+* Fix `#953 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/953>`_: getInput() now uses stored converter for plugin custom types (`#1104 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1104>`_)
+* Improve test suite quality and coverage (`#1102 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1102>`_)
+* Fix Groot2Publisher destructor infinite loop (`#1057 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1057>`_) (`#1100 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1100>`_)
+* Fix misleading static_assert when extra args have wrong type (`#837 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/837>`_) (`#1098 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1098>`_)
+* Fix DelayNode ignoring delay_msec when created from XML (`#1097 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1097>`_)
+* Fix Windows build issues (`#762 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/762>`_, `#869 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/869>`_, `#836 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/836>`_) (`#1089 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1089>`_)
+* Fix `#989 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/989>`_: JsonExporter use-after-move in vector converter registration (`#1090 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1090>`_)
+* Fix `#672 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/672>`_: reject deeply-nested/recursive XML to prevent stack overflow (`#1091 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1091>`_)
+* Fix `#930 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/930>`_: mock substitution hangs when TestNodeConfigs is absent (`#1086 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1086>`_)
+* Detect recursive subtree cycles at parse time (`#979 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/979>`_) (`#1085 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1085>`_)
+* Fix `#1046 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1046>`_: use-after-free when factory destroyed before tree (`#1081 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1081>`_)
+* Fix `#934 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/934>`_: segfault when substituting a SubTree node (`#1083 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1083>`_)
+* Fix `#937 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/937>`_: enable returning BehaviorTreeFactory by value (`#1082 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1082>`_)
+* Add vcpkg installation instructions (`#421 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/421>`_)
+* Fix `#942 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/942>`_: getLockedPortContent creates entry for default-remapped ports (`#1078 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1078>`_)
+* Add code coverage CI with Codecov, Coveralls, Codacy, and SonarCloud (`#1068 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1068>`_)
+* Fix Groot2Publisher destructor infinite loop (`#1058 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1058>`_)
+* Remove deprecated `std::aligned_storage` (`#1061 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1061>`_)
+* Add regression test for `#1065 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1065>`_: subtree string literal to LoopDouble (`#1072 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1072>`_)
+* Add regression test for `#858 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/858>`_: getInput with default port value (`#1076 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1076>`_)
+* Add regression test for `#832 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/832>`_: script compare with negative number (`#1071 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1071>`_)
+* Add regression test for `#923 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/923>`_: ValidateScript OOB read with large scripts (`#1070 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1070>`_)
+* Fix `#948 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/948>`_: parseString supports enums with convertFromString specializations (`#1075 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1075>`_)
+* Fix `#982 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/982>`_: handle json: prefix in vector convertFromString specializations (`#1073 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1073>`_)
+* Fix `#408 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/408>`_: debugMessage shows type info for remapped subtree entries (`#1079 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1079>`_)
+* Fix `#969 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/969>`_: LoopNode accepts std::vector<T> in addition to SharedQueue<T> (`#1074 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1074>`_)
+* Fix `#1029 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1029>`_: correct left-associativity for arithmetic operators in script parser (`#1069 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1069>`_)
+* Generate .clangd in PROJECT_SOURCE_DIR for submodule/FetchContent support (`#1059 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1059>`_)
+* Contributors: Christoph Hertzberg, Copilot, Davide Faconti, Frank, Vincent PALANCHER, alvintps, dependabot[bot]
+
+4.8.4 (2026-01-09)
+------------------
+* extend the Groot example to reproduce issues with arrays
+* add tool to generate XML models
+* add documentation to classes
+* sort includes with clang format
+* add new name validation rules
+* add claude file
+* detect duplicated instance names
+* cleanup doc
+* add contributors guide
+* move and cleanup tests
+* Contributors: Davide Faconti
+
+4.8.3 (2025-12-29)
+------------------
+* minor change
+* remove nolint
+* Entry should be non copyable
+* miscellaneus
+* fix
+* run clang tidy in CI
+* fix remaining warnings
+* apply the rulke of 5
+* fix compilation in c++17
+* add clang tidy and fix warnings
+* update copyright year
+* add unit test
+* fix multiple issues with SimpleString
+* Merge pull request `#1043 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1043>`_ from uilianries/fix/cppzmq-visibility
+  [fix] Make cppzmq as public dependency to avoid linkage errors for tools
+* Turn cppzmq dependency public
+* Restore Star History and add Contributors section
+  Reintroduced the Star History section and added Contributors section to the README.
+* Update copyright year in README.md
+* Contributors: Davide Faconti, Uilian Ries
+
+4.8.2 (2025-10-30)
+------------------
+* Merge pull request `#996 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/996>`_ from EnjoyRobotics/make-sequence-node-inheritable
+* Merge branch 'master' of github.com:BehaviorTree/BehaviorTree.CPP
+* fix issue `#1034 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1034>`_
+* Merge pull request `#1030 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1030>`_ from pleemann/tree_wake_up
+  Event-based tree ticking
+* force tinyxml2_vendor in ROS2. See `#1033 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1033>`_ and `#1028 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1028>`_
+* added Tree::emitWakeUpSignal
+* Lint
+* Propagate node config to parent
+* Make tick method protected
+* Contributors: Davide Faconti, pleemann, redvinaa
+
+4.8.1 (2025-10-23)
+------------------
+
+4.8.0 (2025-10-14)
+------------------
+* fix issue in destruction order
+* fix memory leak
+* fix thread safety issues
+* Improve error message
+* Leave a note for posterity
+* Fix windows builds
+* Do not fail fast. We want results of both sanitizer runs
+* Combine sanitizer actions into a single file
+* use gtest_discover_tests to regiester the unit tests
+  this modern approach registers many individual tests instead of a single monolitic test
+  so if one fails the rest continue running which allows the developer to flag multiple
+  failing tests on a single run
+  It also speeds up testing since tests run in parallel
+* Add support for sanitizers including some GHAs
+* Remove unused conan.cmake (`#1016 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1016>`_)
+* Improve handling of dependencies (`#1012 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1012>`_)
+* update tinyxml to version 11.0
+* fix potential compilation errors
+* compile for c++ 17 (`#1013 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1013>`_)
+* Contributors: Davide Faconti, Eric Riff
+
+4.7.3 (2025-10-01)
+------------------
+* remove cpp-sqlite
+* update cppzmq to 4.11.0
+* remove wildcards from 3rd party
+* Clean up VerifyXML logic (`#1000 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1000>`_)
+  * Refactor VerifyXML to clarify logic
+  - Reduces duplication in VerifyXML by handling the ID check for built-in
+  node types up front so they can then be definitively looked up in the
+  registered nodes.
+  - Enhances error messaging in VerifyXML by using *either* the node name
+  *or* the ID, depending on which is appropriate, instead of leaving
+  users guessing "which Decorator is wrong"
+  - Fixes custom Action and Condition nodes using shorthand syntax not
+  being properly verified
+  - Fixes `<Control ID="ReactiveSequence"/>` not being verified with the
+  same logic as `<ReactiveSequence/>`
+  - Fixes `<Action ID="MyAction"/>` not triggering a behavior lookup when
+  `<MyAction/>` would.
+  * fix tests that were failing due to bad assumptions
+* Append SQLite3_INCLUDE_DIRS to BTCPP_EXTRA_INCLUDE_DIRS, otherwise sqlite3.h won't be found (`#1002 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1002>`_)
+  Co-authored-by: alejandro.suarez@omron.com <alejandro.suarez@omron.com>
+* fix: use dynamically growing error buffer in ParseScript (`#1007 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1007>`_)
+  * fix: use dynamically growing error buffer in ParseScript
+  * style: format code
+  * fix: use dynamically growing error buffer in ValidateScript
+  ---------
+  Co-authored-by: ahuo <ahuo2865189826@gmail.com>
+* fix: validate __type field before accessing in fromJson (`#1009 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1009>`_)
+  Co-authored-by: ahuo <ahuo2865189826@gmail.com>
+* fix: check path attribute before using (`#1005 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/1005>`_)
+  Co-authored-by: ahuo <ahuo2865189826@gmail.com>
+* Set current_child_idx of SequenceNode protected (`#991 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/991>`_)
+* Add convertFromString<vector<bool>> (`#992 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/992>`_)
+* Update README.md fix `#985 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/985>`_
+  Duuuude
+* fix: exclude 3rd party libraries from sonar issue tracking (`#984 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/984>`_)
+* change CI file
+* Contributors: Alejandro Suárez, Davide Faconti, Ezra Brooks, Marcus Ebner von Eschenbach, Shaur(ya) Kumar, Vince Reda, Yiyi Wang
+
+4.7.2 (2025-05-29)
+------------------
+* Fix issue `#978 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/978>`_ : skipped was not working properly
+* Added codespell as a pre-commit hook. (`#977 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/977>`_)
+* fix: Make impossible to accidentally copy JsonExporter singleton (`#975 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/975>`_)
+* Contributors: Davide Faconti, Leander Stephen D'Souza, tony-p
+
+4.7.1 (2025-05-13)
+------------------
+* fix ROS CI
+* Add action to publish Doxygen documentation as GH Page (`#972 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/972>`_)
+* Update Doxyfile
+* Make BT::Any::copyInto const (`#970 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/970>`_)
+* more changes related to TestNode
+* Contributors: David Sobek, Davide Faconti, Marcus Ebner von Eschenbach
+
+4.7.0 (2025-04-24)
+------------------
+* change TestNodeConfig preferred constructor
+* Fix dangling‐capture in TestNodeConfig
+* Fix Precondition to only check condition once (`#904 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/904>`_)
+* fix issue 945
+* extend JSON conversion to include vectors (`#965 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/965>`_)
+* Fix CI, add BUILD_TESTS and remove catkin support
+* Fix testing CMake issue to resolve Rolling regression (`#961 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/961>`_)
+* Bug fix/set blackboard (`#955 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/955>`_)
+* feat: add fuzzing harnesses (`#925 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/925>`_)
+* fix warnings
+* Add const to applyVisitor (`#935 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/935>`_)
+* try fix (`#941 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/941>`_)
+* add workflow for sonarcube (`#936 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/936>`_)
+* Fix issue `#909 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/909>`_: static queue in Loop
+* apply changes suggested in `#893 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/893>`_
+* apply fix mentioned in `#916 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/916>`_
+* apply fixes suggested in `#919 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/919>`_
+* fix issue `#918 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/918>`_ (introduced in `#885 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/885>`_)
+* add fix suggested in `#920 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/920>`_
+* add unit test related to `#931 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/931>`_
+* Fix compilation error when targeting C++23 (`#926 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/926>`_)                   ^~~~~~~~~~~~~
+* Fixes issue # `#929 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/929>`_ and `#921 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/921>`_
+* apply check suggested in `#924 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/924>`_
+* Fix ROS 2 build when ZeroMQ or SQlite3 include are not in the default include path (`#911 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/911>`_)
+  * Fix ROS 2 build when ZeroMQ or SQlite3 include are not in the default include path
+  * Update ament_build.cmake
+* Fix/use correct compiler pixi/conda (`#914 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/914>`_)
+  * fix: Use the cxx-compiler package which will set the correct compiler for the platform, and setup the required environment for it to work as expected
+  * misc: update pixi versions in pipeline
+* Add "other ports" to NodeConfig (`#910 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/910>`_)
+* [retry_node] Refresh max_attempts\_ in case it changed (`#905 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/905>`_)
+  Co-authored-by: Guillaume Doisy <guillaume@dexory.com>
+* use relative path in .Doxyfile (`#882 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/882>`_)
+* Additional XML verification for ReactiveSequence nodes (`#885 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/885>`_)
+  Co-authored-by: AndyZe <andyzelenak@apptronik.com>
+* fix script parse error while 'A==-1' (`#896 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/896>`_)
+  Co-authored-by: wangzheng <wangz@oasisrobotics.tech>
+* Expose return value of wait_for (`#887 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/887>`_)
+* fix(examples): update t11_groot_howto log filename (`#886 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/886>`_)
+* put minitrace in the build_interface link library (`#874 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/874>`_)
+  fixes the cmake export set when building behavior tree on standard cmake: CMake Error: install(EXPORT "behaviortree_cppTargets" ...) includes target "behaviortree_cpp" which requires target "minitrace" that is not in any export set.
+* Improved XML parsing error message to say where in the XML the offending port is found. (`#876 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/876>`_)
+  Example output:
+  a port with name [ball_pose] is found in the XML (<GrabBall>, line 7) but not in the providedPorts() of its registered node type.
+* Refactored the TreeNode::executeTick() function to use a scoped timer for performance monitoring. (`#861 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/861>`_) (`#863 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/863>`_)
+  Update src/tree_node.cpp
+  Co-authored-by: wangzheng <wangz@oasisrobotics.tech>
+  Co-authored-by: Davide Faconti <davide.faconti@gmail.com>
+* fix issue `#852 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/852>`_: thread safety in Loggers
+* Lexy updated
+* tinyXML updated to version 10.0
+* cppzmq updated to version 4.10
+* fix the "all_skipped" logic
+* fixed: support utf-8 path xml-file (`#845 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/845>`_)
+  * fixed: 1. added compile version check to support Chinese path xml-file parsing 2. cmake add msvc /utf-8 options
+  * change cmake /utf-8 option add mode
+* Export plugins to share directory & register CrossDoor plugin (`#804 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/804>`_)
+* Contributors: Aglargil, AndyZe, Antoine Hoarau, David Sobek, Davide Faconti, Guillaume Doisy, Isar Meijer, Jake Keller, Marq Rasmussen, Michele Tartari, Silvio Traversaro, Tony Najjar, b-adkins, ckrah, devis12, kinly, tony-p, vincent-hui
+
 4.6.2 (2024-06-26)
 ------------------
 * Initialize template variable `T out` (`#839 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/839>`_)
@@ -46,7 +711,7 @@ Changelog for package behaviortree_cpp
 * warn about overwritten enums
 * fix ambiguous to_json
 * Extend unit test for blackboard backup to run the second tree (`#789 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/789>`_)
-* json convertion changed and
+* json conversion changed and
 * issue `#755 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/755>`_ : add backchaining test and change reactive nodes checks (`#770 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/770>`_)
 * Update switch_node.h
 * test moved and port remapping fixed
@@ -323,7 +988,7 @@ Changelog for package behaviortree_cpp
 * better include paths
 * Control node and Decorators RUNNING before first child
 * blackboard: update getKeys and add mutex to scripting
-* add [[nodiscard]] and some othe minor changes
+* add [[nodiscard]] and some other minor changes
 * add screenshot
 * change the behavior of tickOnce to actually loop is wake up signal is… (`#522 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/522>`_)
   * change the behavior of tickOnce to actually loop is wake up signal is received
@@ -422,7 +1087,7 @@ Changelog for package behaviortree_cpp
   dependency explicitly.
 * Change order of lock to prevent deadlock. (`#368 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/368>`_)
   Resolves `#367 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/367>`_.
-* Fix `#320 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/320>`_ : forbit refrences in Any
+* Fix `#320 <https://github.com/BehaviorTree/BehaviorTree.CPP/issues/320>`_ : forbid references in Any
 * Update action_node.h
 * Contributors: Adam Sasine, Davide Faconti, Fabian Schurig, Griswald Brooks, Hyeongsik Min, Robodrome, imgbot[bot], panwauu
 
@@ -769,9 +1434,9 @@ Changelog for package behaviortree_cpp
 * Conan package distribution (#39)
 * Non-functional refactoring of xml_parsing to clean up the code
 * cosmetic changes in the code of BehaviorTreeFactory
-* XML schema. Related to enchancement #40
+* XML schema. Related to enhancement #40
 * call setRegistrationName() for built-in Nodes
-  The methos is called by BehaviorTreefactory, therefore it
+  The method is called by BehaviorTreefactory, therefore it
   registrationName is empty if trees are created programmatically.
 * Reset reference count when destroying logger (issue #38)
 * Contributors: Davide Facont, Davide Faconti, Uilian Ries
@@ -787,7 +1452,7 @@ Changelog for package behaviortree_cpp
 ------------------
 * adding virtual TreeNode::onInit() [issue #33]
 * fix issue #34 : if you don't implement convertFromString, it will compile but it may throw
-* Pretty demangled names and obsolate comments removed
+* Pretty demangled names and obsolete comments removed
 * bug fixes
 * more comments
 * [enhancement #32]: add CoroActionNode and rename ActionNode as "AsynActionNode"
@@ -854,7 +1519,7 @@ Changelog for package behaviortree_cpp
 * Fix: registerBuilder did not register the manifest. It was "broken" as public API method
 * Use the Pimpl idiom to hide zmq from the header file
 * move header of minitrace in the cpp file
-* Fixed a crash occuring when you didn't initialized a Tree object (#20)
+* Fixed a crash occurring when you didn't initialized a Tree object (#20)
 * Fix issue #16
 * add ParallelNode to pre-registered entries in factory (issue #13)
 * removed M_PI

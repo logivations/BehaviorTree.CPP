@@ -1,14 +1,14 @@
 #ifndef SIMPLE_SIGNAL_H
 #define SIMPLE_SIGNAL_H
 
-#include <memory>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace BT
 {
 /**
- * Super simple Signal/Slop implementation, AKA "Observable pattern".
+ * Super simple Signal/Slot implementation, AKA "Observable pattern".
  * The subscriber is active until it goes out of scope or Subscriber::reset() is called.
  */
 template <typename... CallableArgs>
@@ -34,7 +34,7 @@ public:
     }
   }
 
-  Subscriber subscribe(CallableFunction func)
+  [[nodiscard]] Subscriber subscribe(CallableFunction func)
   {
     Subscriber sub = std::make_shared<CallableFunction>(std::move(func));
     subscribers_.emplace_back(sub);

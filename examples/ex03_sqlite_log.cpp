@@ -1,4 +1,5 @@
 #include "dummy_nodes.h"
+
 #include "behaviortree_cpp/bt_factory.h"
 #include "behaviortree_cpp/loggers/bt_sqlite_logger.h"
 #include "behaviortree_cpp/xml_parsing.h"
@@ -112,7 +113,7 @@ int main()
   // Write some data (from the blackboard) and write into the
   // extra column called "extra_data". We will use JSON serialization
 
-  auto meta_callback = [&](BT::Duration timestamp, const BT::TreeNode& node,
+  auto meta_callback = [&](BT::Duration /*timestamp*/, const BT::TreeNode& node,
                            BT::NodeStatus prev_status,
                            BT::NodeStatus status) -> std::string {
     if(prev_status == BT::NodeStatus::RUNNING && BT::isStatusCompleted(status))

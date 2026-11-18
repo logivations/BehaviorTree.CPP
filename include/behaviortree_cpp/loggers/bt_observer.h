@@ -1,8 +1,9 @@
 #ifndef BT_OBSERVER_H
 #define BT_OBSERVER_H
 
-#include <cstring>
 #include "behaviortree_cpp/loggers/abstract_logger.h"
+
+#include <cstring>
 
 namespace BT
 {
@@ -19,6 +20,11 @@ class TreeObserver : public StatusChangeLogger
 public:
   TreeObserver(const BT::Tree& tree);
   ~TreeObserver() override;
+
+  TreeObserver(const TreeObserver&) = delete;
+  TreeObserver& operator=(const TreeObserver&) = delete;
+  TreeObserver(TreeObserver&&) = delete;
+  TreeObserver& operator=(TreeObserver&&) = delete;
 
   virtual void flush() override
   {}
@@ -44,7 +50,8 @@ public:
     Duration last_timestamp = {};
   };
 
-  // find the statistics of a node, based on its path
+  // find the statistics of a node, based on its path.
+  // If more nodes have the same path, this is the first one in depth-first order.
   const NodeStatistics& getStatistics(const std::string& path) const;
 
   // find the statistics of a node, based on its TreeNode::UID()

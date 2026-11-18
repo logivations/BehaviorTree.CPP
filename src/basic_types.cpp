@@ -1,10 +1,27 @@
 #include "behaviortree_cpp/basic_types.h"
-#include "behaviortree_cpp/json_export.h"
 
+#include "behaviortree_cpp/json_export.h"
+#include "behaviortree_cpp/tree_node.h"
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+// Apple's libc++ lacks the floating-point std::from_chars overload; parseDouble
+// falls back to strtod_l with a private "C" locale, which needs these headers.
+#if !defined(__cpp_lib_to_chars) || (__cpp_lib_to_chars < 201611L)
+#include <cctype>
+#include <cerrno>
+#include <cmath>
+#include <limits>
+
+#include <locale.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
+#endif
 #include <cstdlib>
 #include <cstring>
-#include <clocale>
-#include <charconv>
+#include <tuple>
 
 namespace BT
 {
@@ -45,31 +62,28 @@ std::string toStr(NodeStatus status, bool colored)
   {
     return toStr(status);
   }
-  else
+  switch(status)
   {
-    switch(status)
-    {
-      case NodeStatus::SUCCESS:
-        return "\x1b[32m"
-               "SUCCESS"
-               "\x1b[0m";  // RED
-      case NodeStatus::FAILURE:
-        return "\x1b[31m"
-               "FAILURE"
-               "\x1b[0m";  // GREEN
-      case NodeStatus::RUNNING:
-        return "\x1b[33m"
-               "RUNNING"
-               "\x1b[0m";  // YELLOW
-      case NodeStatus::SKIPPED:
-        return "\x1b[34m"
-               "SKIPPED"
-               "\x1b[0m";  // BLUE
-      case NodeStatus::IDLE:
-        return "\x1b[36m"
-               "IDLE"
-               "\x1b[0m";  // CYAN
-    }
+    case NodeStatus::SUCCESS:
+      return "\x1b[32m"
+             "SUCCESS"
+             "\x1b[0m";  // GREEN
+    case NodeStatus::FAILURE:
+      return "\x1b[31m"
+             "FAILURE"
+             "\x1b[0m";  // RED
+    case NodeStatus::RUNNING:
+      return "\x1b[33m"
+             "RUNNING"
+             "\x1b[0m";  // YELLOW
+    case NodeStatus::SKIPPED:
+      return "\x1b[34m"
+             "SKIPPED"
+             "\x1b[0m";  // BLUE
+    case NodeStatus::IDLE:
+      return "\x1b[36m"
+             "IDLE"
+             "\x1b[0m";  // CYAN
   }
   return "Undefined";
 }
@@ -118,8 +132,9 @@ std::string convertFromString<std::string>(StringView str)
 template <>
 int64_t convertFromString<int64_t>(StringView str)
 {
-  long result = 0;
-  auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+  int64_t result = 0;
+  const auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+  std::ignore = ptr;
   if(ec != std::errc())
   {
     throw RuntimeError(StrCat("Can't convert string [", str, "] to integer"));
@@ -130,8 +145,9 @@ int64_t convertFromString<int64_t>(StringView str)
 template <>
 uint64_t convertFromString<uint64_t>(StringView str)
 {
-  unsigned long result = 0;
-  auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+  uint64_t result = 0;
+  const auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+  std::ignore = ptr;
   if(ec != std::errc())
   {
     throw RuntimeError(StrCat("Can't convert string [", str, "] to integer"));
@@ -139,6 +155,8 @@ uint64_t convertFromString<uint64_t>(StringView str)
   return result;
 }
 
+namespace
+{
 template <typename T>
 T ConvertWithBoundCheck(StringView str)
 {
@@ -148,8 +166,9 @@ T ConvertWithBoundCheck(StringView str)
     throw RuntimeError(
         StrCat("Value out of bound when converting [", str, "] to integer"));
   }
-  return res;
+  return static_cast<T>(res);
 }
+}  // namespace
 
 template <>
 int8_t convertFromString<int8_t>(StringView str)
@@ -187,32 +206,131 @@ uint32_t convertFromString<uint32_t>(StringView str)
   return ConvertWithBoundCheck<uint32_t>(str);
 }
 
+bool parseDouble(StringView str, double& out, bool require_full_consumption)
+{
+#if defined(__cpp_lib_to_chars) && (__cpp_lib_to_chars >= 201611L)
+  // std::from_chars is locale-independent and thread-safe.
+  const char* begin = str.data();
+  const char* end = begin + str.size();
+  const auto [ptr, ec] = std::from_chars(begin, end, out);
+  if(ec != std::errc())
+  {
+    return false;
+  }
+  return !require_full_consumption || ptr == end;
+#else
+  // Apple's libc++ lacks the floating-point std::from_chars overload. Reproduce
+  // its std::chars_format::general semantics with strtod_l under a "C" locale
+  // created once (thread-safe, no global setlocale mutation), plus a guard that
+  // rejects the leading whitespace, leading '+', and hex floats that strtod
+  // would otherwise accept.
+  if(str.empty())
+  {
+    return false;
+  }
+  const char first = str.front();
+  if(first == '+' || std::isspace(static_cast<unsigned char>(first)) != 0)
+  {
+    return false;
+  }
+  // std::from_chars(general) does not recognise a "0x"/"0X" hex-float prefix; it
+  // parses only the leading "0" and stops at the 'x'. strtod would consume the
+  // whole hex float, so emulate from_chars here: the value is 0, and everything
+  // from the 'x' onward is unparsed (a failure only in the full-consumption case).
+  const std::size_t mantissa = (first == '-') ? 1u : 0u;
+  if(str.size() > mantissa + 1 && str[mantissa] == '0' &&
+     (str[mantissa + 1] == 'x' || str[mantissa + 1] == 'X'))
+  {
+    if(require_full_consumption)
+    {
+      return false;
+    }
+    out = (first == '-') ? -0.0 : 0.0;
+    return true;
+  }
+  static ::locale_t c_locale =
+      ::newlocale(LC_NUMERIC_MASK, "C", static_cast<::locale_t>(0));
+  if(c_locale == static_cast<::locale_t>(0))
+  {
+    return false;
+  }
+  // strtod_l needs a null-terminated buffer.
+  const std::string buffer(str.data(), str.size());
+  errno = 0;
+  char* parse_end = nullptr;
+  const double value = ::strtod_l(buffer.c_str(), &parse_end, c_locale);
+  if(parse_end == buffer.c_str() || errno == ERANGE)
+  {
+    return false;
+  }
+  if(require_full_consumption && parse_end != buffer.c_str() + buffer.size())
+  {
+    return false;
+  }
+  out = value;
+  return true;
+#endif
+}
+
 template <>
 double convertFromString<double>(StringView str)
 {
-  // see issue #120
-  // http://quick-bench.com/DWaXRWnxtxvwIMvZy2DxVPEKJnE
-
-  std::string old_locale = setlocale(LC_NUMERIC, nullptr);
-  setlocale(LC_NUMERIC, "C");
-  double val = std::stod(str.data());
-  setlocale(LC_NUMERIC, old_locale.c_str());
-  return val;
+  double result = 0;
+  if(!parseDouble(str, result, /*require_full_consumption=*/false))
+  {
+    throw RuntimeError(StrCat("Can't convert string [", str, "] to double"));
+  }
+  return result;
 }
 
 template <>
 float convertFromString<float>(StringView str)
 {
-  std::string old_locale = setlocale(LC_NUMERIC, nullptr);
-  setlocale(LC_NUMERIC, "C");
-  float val = std::stof(str.data());
-  setlocale(LC_NUMERIC, old_locale.c_str());
-  return val;
+#if __cpp_lib_to_chars >= 201611L
+  // Parse directly as float to preserve std::from_chars<float> range semantics.
+  float result = 0;
+  const auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+  if(ec != std::errc())
+  {
+    throw RuntimeError(StrCat("Can't convert string [", str, "] to float"));
+  }
+  return result;
+#else
+  double result = 0;
+  if(!parseDouble(str, result, /*require_full_consumption=*/false))
+  {
+    throw RuntimeError(StrCat("Can't convert string [", str, "] to float"));
+  }
+  // std::from_chars<float> reports result_out_of_range for a finite value that
+  // does not fit in a float; casting the double would silently give an infinity.
+  // 0x1.ffffffp+127 is FLT_MAX + half an ulp: values below it round to FLT_MAX.
+  if(std::isfinite(result) && std::fabs(result) >= 0x1.ffffffp+127)
+  {
+    throw RuntimeError(StrCat("Can't convert string [", str, "] to float"));
+  }
+  return static_cast<float>(result);
+#endif
 }
 
 template <>
 std::vector<int> convertFromString<std::vector<int>>(StringView str)
 {
+  if(StartWith(str, "json:"))
+  {
+    str.remove_prefix(5);
+    const auto json = nlohmann::json::parse(str);
+    if(!json.is_array())
+    {
+      throw RuntimeError(StrCat("Can't convert string [", str, "] to std::vector<int>"));
+    }
+    std::vector<int> output;
+    output.reserve(json.size());
+    for(const auto& element : json)
+    {
+      output.push_back(details::JsonToInteger<int>(element));
+    }
+    return output;
+  }
   auto parts = splitString(str, ';');
   std::vector<int> output;
   output.reserve(parts.size());
@@ -226,6 +344,11 @@ std::vector<int> convertFromString<std::vector<int>>(StringView str)
 template <>
 std::vector<double> convertFromString<std::vector<double>>(StringView str)
 {
+  if(StartWith(str, "json:"))
+  {
+    str.remove_prefix(5);
+    return nlohmann::json::parse(str).get<std::vector<double>>();
+  }
   auto parts = splitString(str, ';');
   std::vector<double> output;
   output.reserve(parts.size());
@@ -237,8 +360,31 @@ std::vector<double> convertFromString<std::vector<double>>(StringView str)
 }
 
 template <>
+std::vector<bool> convertFromString<std::vector<bool>>(StringView str)
+{
+  if(StartWith(str, "json:"))
+  {
+    str.remove_prefix(5);
+    return nlohmann::json::parse(str).get<std::vector<bool>>();
+  }
+  auto parts = splitString(str, ';');
+  std::vector<bool> output;
+  output.reserve(parts.size());
+  for(const StringView& part : parts)
+  {
+    output.push_back(convertFromString<bool>(part));
+  }
+  return output;
+}
+
+template <>
 std::vector<std::string> convertFromString<std::vector<std::string>>(StringView str)
 {
+  if(StartWith(str, "json:"))
+  {
+    str.remove_prefix(5);
+    return nlohmann::json::parse(str).get<std::vector<std::string>>();
+  }
   auto parts = splitString(str, ';');
   std::vector<std::string> output;
   output.reserve(parts.size());
@@ -420,29 +566,85 @@ const std::string& PortInfo::defaultValueString() const
 
 bool IsAllowedPortName(StringView str)
 {
-  if(str == "_autoremap")
-  {
-    return true;
-  }
   if(str.empty())
   {
     return false;
   }
   const char first_char = str.data()[0];
-  if(!std::isalpha(first_char))
+  // Port name cannot start with a digit
+  if(std::isalpha(static_cast<unsigned char>(first_char)) == 0)
   {
     return false;
   }
-  if(str == "name" || str == "ID")
+  // Check for forbidden characters
+  if(findForbiddenChar(str) != '\0')
   {
     return false;
   }
-  return true;
+  return !IsReservedAttribute(str);
+}
+
+bool IsReservedAttribute(StringView str)
+{
+  for(const auto& name : PreCondNames)
+  {
+    if(name == str)
+    {
+      return true;
+    }
+  }
+  for(const auto& name : PostCondNames)
+  {
+    if(name == str)
+    {
+      return true;
+    }
+  }
+  return str == "name" || str == "ID" || str == "_autoremap";
+}
+
+char findForbiddenChar(StringView name)
+{
+  // Forbidden characters that break XML serialization or cause filesystem issues
+  static constexpr std::array<char, 16> kForbiddenChars = {
+    ' ', '\t', '\n', '\r', '<', '>', '&', '"', '\'', '/', '\\', ':', '*', '?', '|', '.'
+  };
+
+  for(const char c : name)
+  {
+    const auto uc = static_cast<unsigned char>(c);
+    // Allow UTF-8 multibyte sequences (high bit set)
+    if(uc >= 0x80)
+    {
+      continue;
+    }
+    // Block control characters (ASCII 0-31 and 127)
+    if(uc < 32 || uc == 127)
+    {
+      return c;
+    }
+    // Check forbidden character list
+    if(std::find(kForbiddenChars.begin(), kForbiddenChars.end(), c) !=
+       kForbiddenChars.end())
+    {
+      return c;
+    }
+  }
+  return '\0';
+}
+
+std::string formatForbiddenChar(char c)
+{
+  if(c < 32 || c == 127)
+  {
+    return "control character (ASCII " + std::to_string(static_cast<int>(c)) + ")";
+  }
+  return std::string("'") + c + "'";
 }
 
 Any convertFromJSON(StringView json_text, std::type_index type)
 {
-  nlohmann::json json = nlohmann::json::parse(json_text);
+  const nlohmann::json json = nlohmann::json::parse(json_text);
   auto res = JsonExporter::get().fromJson(json, type);
   if(!res)
   {
@@ -463,8 +665,18 @@ Expected<std::string> toJsonString(const Any& value)
 
 bool StartWith(StringView str, StringView prefix)
 {
-  return str.size() >= prefix.size() &&
-         strncmp(str.data(), prefix.data(), prefix.size()) == 0;
+  if(str.size() < prefix.size())
+  {
+    return false;
+  }
+  for(size_t i = 0; i < prefix.size(); ++i)
+  {
+    if(str[i] != prefix[i])
+    {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool StartWith(StringView str, char prefix)

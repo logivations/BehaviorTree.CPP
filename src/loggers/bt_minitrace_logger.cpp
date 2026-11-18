@@ -2,7 +2,7 @@
 #include "behaviortree_cpp/loggers/bt_minitrace_logger.h"
 
 #define MTR_ENABLED true
-#include "minitrace/minitrace.h"
+#include "minitrace.h"
 
 namespace BT
 {
@@ -17,10 +17,15 @@ MinitraceLogger::MinitraceLogger(const Tree& tree, const char* filename_json)
 
 MinitraceLogger::~MinitraceLogger()
 {
+  // Stop status callbacks before shutting down minitrace.
+  unsubscribeFromTreeChanges();
+
   mtr_flush();
   mtr_shutdown();
 }
 
+namespace
+{
 const char* toConstStr(NodeType type)
 {
   switch(type)
@@ -39,6 +44,7 @@ const char* toConstStr(NodeType type)
       return "Undefined";
   }
 }
+}  // namespace
 
 void MinitraceLogger::callback(Duration /*timestamp*/, const TreeNode& node,
                                NodeStatus prev_status, NodeStatus status)

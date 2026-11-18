@@ -1,4 +1,4 @@
-/*  Copyright (C) 2018-2023 Davide Faconti -  All Rights Reserved
+/*  Copyright (C) 2018-2025 Davide Faconti -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -14,6 +14,7 @@
 
 #include "behaviortree_cpp/decorator_node.h"
 #include "behaviortree_cpp/utils/timer_queue.h"
+
 #include <atomic>
 
 namespace BT
@@ -57,8 +58,20 @@ public:
 
   ~TimeoutNode() override
   {
-    timer_.cancelAll();
+    {
+      const std::unique_lock<std::mutex> lk(timeout_mutex_);
+      timeout_started_ = false;
+    }
+    // Join the timer thread here, without holding timeout_mutex_ (the handler
+    // locks it): timer_ is the first member, so it is destroyed after
+    // timeout_mutex_ and timeout_started_.
+    timer_.stop();
   }
+
+  TimeoutNode(const TimeoutNode&) = delete;
+  TimeoutNode& operator=(const TimeoutNode&) = delete;
+  TimeoutNode(TimeoutNode&&) = delete;
+  TimeoutNode& operator=(TimeoutNode&&) = delete;
 
   static PortsList providedPorts()
   {
@@ -71,6 +84,7 @@ private:
 
   void halt() override;
 
+  // Member order is frozen for ABI compatibility: do not reorder.
   TimerQueue<> timer_;
   std::atomic_bool child_halted_ = false;
   uint64_t timer_id_;

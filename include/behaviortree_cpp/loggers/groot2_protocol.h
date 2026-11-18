@@ -1,15 +1,21 @@
 #pragma once
 
-#include <cstdint>
-#include <array>
-#include <cstring>
-#include <stdexcept>
-#include <random>
-#include <memory>
-#include <condition_variable>
-#include <mutex>
 #include "behaviortree_cpp/basic_types.h"
+#include "behaviortree_cpp/json_export.h"
+#ifdef BTCPP_SYSTEM_JSON
+#include <nlohmann/json.hpp>
+#else
 #include "behaviortree_cpp/contrib/json.hpp"
+#endif
+
+#include <array>
+#include <condition_variable>
+#include <cstdint>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <random>
+#include <stdexcept>
 
 namespace BT::Monitor
 {
@@ -27,11 +33,11 @@ namespace BT::Monitor
 
 enum RequestType : uint8_t
 {
-  // Request the entire tree defintion as XML
+  // Request the entire tree definition as XML
   FULLTREE = 'T',
-  // Request the staus of all the nodes
+  // Request the status of all the nodes
   STATUS = 'S',
-  // retrieve the valus in a set of blackboards
+  // retrieve the values in a set of blackboards
   BLACKBOARD = 'B',
 
   // Groot requests the insertion of a hook
@@ -132,16 +138,11 @@ struct RequestHeader
 struct ReplyHeader
 {
   RequestHeader request;
-  TreeUniqueUUID tree_id;
+  TreeUniqueUUID tree_id = {};
 
   static size_t size()
   {
     return RequestHeader::size() + 16;
-  }
-
-  ReplyHeader()
-  {
-    tree_id.fill(0);
   }
 };
 
@@ -155,7 +156,7 @@ inline unsigned Serialize(char* buffer, unsigned offset, T value)
 template <typename T>
 inline unsigned Deserialize(const char* buffer, unsigned offset, T& value)
 {
-  memcpy(reinterpret_cast<char*>(&value), buffer + offset, sizeof(T));
+  memcpy(&value, buffer + offset, sizeof(T));
   return sizeof(T);
 }
 
@@ -186,7 +187,7 @@ inline RequestHeader DeserializeRequestHeader(const std::string& buffer)
   RequestHeader header;
   unsigned offset = 0;
   offset += Deserialize(buffer.data(), offset, header.protocol);
-  uint8_t type;
+  uint8_t type = 0;
   offset += Deserialize(buffer.data(), offset, type);
   header.type = static_cast<Monitor::RequestType>(type);
   offset += Deserialize(buffer.data(), offset, header.unique_id);
@@ -256,10 +257,11 @@ inline void to_json(nlohmann::json& js, const Hook& bp)
 inline void from_json(const nlohmann::json& js, Hook& bp)
 {
   js.at("enabled").get_to(bp.enabled);
-  js.at("uid").get_to(bp.node_uid);
+  bp.node_uid = BT::details::JsonToInteger<uint16_t>(js.at("uid"));
   js.at("once").get_to(bp.remove_when_done);
-  bp.mode = static_cast<Hook::Mode>(js.at("mode").get<int>());
-  bp.position = static_cast<Hook::Position>(js.at("position").get<int>());
+  bp.mode = static_cast<Hook::Mode>(BT::details::JsonToInteger<int>(js.at("mode")));
+  bp.position = static_cast<Hook::Position>(BT::details::JsonToInteger<int>(js.at("positi"
+                                                                                  "on")));
 
   const std::string desired_value = js.at("desired_status").get<std::string>();
   bp.desired_status = convertFromString<NodeStatus>(desired_value);

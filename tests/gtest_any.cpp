@@ -10,9 +10,12 @@
 *   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
+#include "test_helper.hpp"
+
 #include <charconv>  // std::{from_chars,from_chars_result},
 #include <string>
 #include <system_error>  // std::errc.
+#include <tuple>
 
 #include <gtest/gtest.h>
 
@@ -108,13 +111,13 @@ TEST(Any, Cast)
   // Signed int.
   {
     Any a(42);
-    EXPECT_ANY_THROW(auto res = a.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = a.cast<bool>());
     EXPECT_EQ(a.cast<int>(), 42);
     EXPECT_EQ(a.cast<double>(), 42.0);
     EXPECT_EQ(a.cast<std::string>(), "42");
 
     Any b(-43);
-    EXPECT_ANY_THROW(auto res = b.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = b.cast<bool>());
     EXPECT_EQ(b.cast<int>(), -43);
     EXPECT_EQ(b.cast<double>(), -43.0);
     EXPECT_EQ(b.cast<std::string>(), "-43");
@@ -137,7 +140,7 @@ TEST(Any, Cast)
   // unsigned int.
   {
     Any a(43u);
-    EXPECT_ANY_THROW(auto res = a.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = a.cast<bool>());
     EXPECT_EQ(a.cast<unsigned int>(), 43u);
     EXPECT_EQ(a.cast<int>(), 43);
     EXPECT_EQ(a.cast<double>(), 43.0);
@@ -169,7 +172,7 @@ TEST(Any, Cast)
     EXPECT_EQ(a.cast<double>(), 44.0);
 #if __cpp_lib_to_chars >= 201611L
     const std::string a_str = a.cast<std::string>();
-    double a_val;
+    double a_val = 0.0;
     const auto res = std::from_chars(a_str.data(), a_str.data() + a_str.size(), a_val,
                                      std::chars_format::general);
     EXPECT_TRUE(res.ec == std::errc{});
@@ -180,11 +183,11 @@ TEST(Any, Cast)
     EXPECT_TRUE(b.cast<bool>());
     EXPECT_EQ(typeid(b.cast<bool>()), typeid(bool));
     // EXPECT_EQ(b.cast<int>(), 44);?
-    EXPECT_ANY_THROW(auto res = b.cast<int>());
+    EXPECT_ANY_THROW(std::ignore = b.cast<int>());
     EXPECT_EQ(b.cast<double>(), 44.1);
 #if __cpp_lib_to_chars >= 201611L
     const std::string b_str = b.cast<std::string>();
-    double b_val;
+    double b_val = 0.0;
     const auto res2 = std::from_chars(b_str.data(), b_str.data() + b_str.size(), b_val,
                                       std::chars_format::general);
     EXPECT_TRUE(res2.ec == std::errc{});
@@ -194,13 +197,13 @@ TEST(Any, Cast)
     Any c(44.9);
     EXPECT_TRUE(c.cast<bool>());
     // EXPECT_EQ(c.cast<int>(), 44);?
-    EXPECT_ANY_THROW(auto res = c.cast<int>());
+    EXPECT_ANY_THROW(std::ignore = c.cast<int>());
     EXPECT_EQ(c.cast<double>(), 44.9);
 
     Any d(-45.0);
     EXPECT_TRUE(c.cast<bool>());
     // EXPECT_EQ(c.cast<int>(), -45);?
-    EXPECT_ANY_THROW(auto res = c.cast<int>());
+    EXPECT_ANY_THROW(std::ignore = c.cast<int>());
 
     Any e(0.0);
     EXPECT_FALSE(e.cast<bool>());
@@ -210,18 +213,18 @@ TEST(Any, Cast)
   // String.
   {
     Any a(std::string{ "fifty" });
-    EXPECT_ANY_THROW(auto res = a.cast<bool>());
-    EXPECT_ANY_THROW(auto res = a.cast<int>());
-    EXPECT_ANY_THROW(auto res = a.cast<double>());
+    EXPECT_ANY_THROW(std::ignore = a.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = a.cast<int>());
+    EXPECT_ANY_THROW(std::ignore = a.cast<double>());
     EXPECT_EQ(a.cast<std::string>(), "fifty");
 
     Any b(std::string{ "true" });
     // EXPECT_TRUE(b.cast<bool>());?
-    EXPECT_ANY_THROW(auto res = b.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = b.cast<bool>());
 
     Any c(std::string{ "false" });
     // EXPECT_FALSE(c.cast<bool>());?
-    EXPECT_ANY_THROW(auto res = c.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = c.cast<bool>());
 
     Any d(std::string{ "0" });
     // EXPECT_FALSE(d.cast<bool>());?
@@ -234,12 +237,12 @@ TEST(Any, Cast)
     EXPECT_EQ(e.cast<double>(), 1.0);
 
     Any f(std::string{ "51" });
-    EXPECT_ANY_THROW(auto res = f.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = f.cast<bool>());
     EXPECT_EQ(f.cast<int>(), 51);
     EXPECT_EQ(f.cast<double>(), 51.0);
 
     Any g(std::string{ "51.1" });
-    EXPECT_ANY_THROW(auto res = g.cast<bool>());
+    EXPECT_ANY_THROW(std::ignore = g.cast<bool>());
     EXPECT_EQ(g.cast<int>(), 51);
     EXPECT_DOUBLE_EQ(g.cast<double>(), 51.1);
   }
@@ -249,4 +252,34 @@ TEST(Any, Cast)
     Any a(v);
     EXPECT_EQ(a.cast<std::vector<int>>(), v);
   }
+}
+
+TEST(Any, StringToNumberIgnoresLocale)
+{
+  // The string -> number conversion must use '.' as decimal separator
+  // regardless of the locale selected by the host application.
+  const ScopedCommaDecimalLocale comma_locale;
+  if(!comma_locale.active())
+  {
+    GTEST_SKIP() << "no locale with ',' as decimal separator on this machine";
+  }
+
+  EXPECT_DOUBLE_EQ(Any(std::string("3.5")).cast<double>(), 3.5);
+  EXPECT_DOUBLE_EQ(Any(std::string("-0.25")).cast<double>(), -0.25);
+  EXPECT_FLOAT_EQ(Any(std::string("1.5e2")).cast<float>(), 150.0f);
+  EXPECT_EQ(Any(std::string("42")).cast<int>(), 42);
+  EXPECT_ANY_THROW(std::ignore = Any(std::string("fifty")).cast<double>());
+}
+
+TEST(Any, StringToUint16IsRangeChecked)
+{
+  // A string that doesn't fit in uint16_t must be rejected, not wrapped.
+  EXPECT_EQ(Any(std::string("65535")).cast<uint16_t>(), 65535);
+  EXPECT_ANY_THROW(std::ignore = Any(std::string("65536")).cast<uint16_t>());
+  EXPECT_ANY_THROW(std::ignore = Any(std::string("70000")).cast<uint16_t>());
+  EXPECT_ANY_THROW(std::ignore = Any(std::string("-1")).cast<uint16_t>());
+
+  auto bb = Blackboard::create();
+  bb->set("value", std::string("70000"));
+  EXPECT_ANY_THROW(std::ignore = bb->get<uint16_t>("value"));
 }

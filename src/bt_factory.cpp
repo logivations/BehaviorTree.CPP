@@ -1,4 +1,4 @@
-/*  Copyright (C) 2018-2022 Davide Faconti, Eurecat -  All Rights Reserved
+/*  Copyright (C) 2018-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -10,23 +10,95 @@
 *   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include <filesystem>
 #include "behaviortree_cpp/bt_factory.h"
-#include "behaviortree_cpp/utils/shared_library.h"
-#include "behaviortree_cpp/contrib/json.hpp"
-#include "behaviortree_cpp/xml_parsing.h"
-#include "wildcards/wildcards.hpp"
 
-#ifdef USING_ROS
-#include <ros/package.h>
-#endif
+#include "tinyxml2.h"
+
+#include "behaviortree_cpp/json_export.h"
+#include "behaviortree_cpp/utils/shared_library.h"
+#include "behaviortree_cpp/utils/wildcards.hpp"
+#include "behaviortree_cpp/xml_parsing.h"
+
+#include <filesystem>
+#include <functional>
+#include <limits>
 
 namespace BT
 {
+namespace
+{
+
+// Extract the main tree ID from an XML root element.
+// Checks main_tree_to_execute attribute first, then falls back to the
+// single BehaviorTree ID if only one is defined.
+std::string detectMainTreeId(const tinyxml2::XMLElement* xml_root)
+{
+  if(const auto* attr = xml_root->Attribute("main_tree_to_execute"))
+  {
+    return attr;
+  }
+  int bt_count = 0;
+  std::string single_id;
+  for(const auto* bt_elem = xml_root->FirstChildElement("BehaviorTree");
+      bt_elem != nullptr; bt_elem = bt_elem->NextSiblingElement("BehaviorTree"))
+  {
+    bt_count++;
+    if(const auto* tree_id = bt_elem->Attribute("ID"))
+    {
+      single_id = tree_id;
+    }
+  }
+  if(bt_count == 1 && !single_id.empty())
+  {
+    return single_id;
+  }
+  return {};
+}
+
+// Load XML into parser and resolve which tree to instantiate.
+// Returns the resolved tree ID (may be empty if parser should use default).
+std::string loadXmlAndResolveTreeId(Parser* parser, const std::string& main_tree_ID,
+                                    const std::function<void()>& load_func)
+{
+  // When the main tree couldn't be determined from the raw XML
+  // (e.g. <BehaviorTree> without an ID), snapshot registered trees
+  // before loading so we can diff afterwards.
+  std::set<std::string> before_set;
+  if(main_tree_ID.empty())
+  {
+    const auto before = parser->registeredBehaviorTrees();
+    before_set.insert(before.begin(), before.end());
+  }
+
+  load_func();
+
+  // Try to identify the newly added tree by diffing.
+  if(main_tree_ID.empty())
+  {
+    const auto after = parser->registeredBehaviorTrees();
+    std::string single_new_tree;
+    int new_count = 0;
+    for(const auto& name : after)
+    {
+      if(before_set.count(name) == 0)
+      {
+        single_new_tree = name;
+        new_count++;
+      }
+    }
+    if(new_count == 1)
+    {
+      return single_new_tree;
+    }
+  }
+  return main_tree_ID;
+}
+
+}  // namespace
 
 bool WildcardMatch(std::string const& str, StringView filter)
 {
-  return wildcards::match(str, filter);
+  return wildcards_match(str, { filter.data(), filter.size() });
 }
 
 struct BehaviorTreeFactory::PImpl
@@ -38,11 +110,13 @@ struct BehaviorTreeFactory::PImpl
   std::shared_ptr<std::unordered_map<std::string, int>> scripting_enums;
   std::shared_ptr<BT::Parser> parser;
   std::unordered_map<std::string, SubstitutionRule> substitution_rules;
+  std::shared_ptr<PolymorphicCastRegistry> polymorphic_registry;
 };
 
 BehaviorTreeFactory::BehaviorTreeFactory() : _p(new PImpl)
 {
   _p->parser = std::make_shared<XMLParser>(*this);
+  _p->polymorphic_registry = std::make_shared<PolymorphicCastRegistry>();
   registerNodeType<FallbackNode>("Fallback");
   registerNodeType<FallbackNode>("AsyncFallback", true);
   registerNodeType<SequenceNode>("Sequence");
@@ -59,6 +133,8 @@ BehaviorTreeFactory::BehaviorTreeFactory() : _p(new PImpl)
   registerNodeType<ReactiveFallback>("ReactiveFallback");
   registerNodeType<IfThenElseNode>("IfThenElse");
   registerNodeType<WhileDoElseNode>("WhileDoElse");
+  registerNodeType<TryCatchNode>("TryCatch");
+  registerNodeType<FinallyNode>("Finally");
 
   registerNodeType<InverterNode>("Inverter");
 
@@ -107,23 +183,15 @@ BehaviorTreeFactory::BehaviorTreeFactory() : _p(new PImpl)
   _p->scripting_enums = std::make_shared<std::unordered_map<std::string, int>>();
 }
 
-BehaviorTreeFactory::BehaviorTreeFactory(BehaviorTreeFactory&& other) noexcept
-{
-  this->_p = std::move(other._p);
-}
+BehaviorTreeFactory::~BehaviorTreeFactory() = default;
 
-BehaviorTreeFactory& BehaviorTreeFactory::operator=(BehaviorTreeFactory&& other) noexcept
-{
-  this->_p = std::move(other._p);
-  return *this;
-}
-
-BehaviorTreeFactory::~BehaviorTreeFactory()
-{}
+BehaviorTreeFactory::BehaviorTreeFactory(BehaviorTreeFactory&& other) noexcept = default;
+BehaviorTreeFactory&
+BehaviorTreeFactory::operator=(BehaviorTreeFactory&& other) noexcept = default;
 
 bool BehaviorTreeFactory::unregisterBuilder(const std::string& ID)
 {
-  if(builtinNodes().count(ID))
+  if(builtinNodes().count(ID) != 0)
   {
     throw LogicError("You can not remove the builtin registration ID [", ID, "]");
   }
@@ -154,12 +222,12 @@ void BehaviorTreeFactory::registerSimpleCondition(
     const std::string& ID, const SimpleConditionNode::TickFunctor& tick_functor,
     PortsList ports)
 {
-  NodeBuilder builder = [tick_functor, ID](const std::string& name,
-                                           const NodeConfig& config) {
+  const NodeBuilder builder = [tick_functor, ID](const std::string& name,
+                                                 const NodeConfig& config) {
     return std::make_unique<SimpleConditionNode>(name, tick_functor, config);
   };
 
-  TreeNodeManifest manifest = { NodeType::CONDITION, ID, std::move(ports), {} };
+  const TreeNodeManifest manifest = { NodeType::CONDITION, ID, std::move(ports), {} };
   registerBuilder(manifest, builder);
 }
 
@@ -167,12 +235,12 @@ void BehaviorTreeFactory::registerSimpleAction(
     const std::string& ID, const SimpleActionNode::TickFunctor& tick_functor,
     PortsList ports)
 {
-  NodeBuilder builder = [tick_functor, ID](const std::string& name,
-                                           const NodeConfig& config) {
+  const NodeBuilder builder = [tick_functor, ID](const std::string& name,
+                                                 const NodeConfig& config) {
     return std::make_unique<SimpleActionNode>(name, tick_functor, config);
   };
 
-  TreeNodeManifest manifest = { NodeType::ACTION, ID, std::move(ports), {} };
+  const TreeNodeManifest manifest = { NodeType::ACTION, ID, std::move(ports), {} };
   registerBuilder(manifest, builder);
 }
 
@@ -180,12 +248,12 @@ void BehaviorTreeFactory::registerSimpleDecorator(
     const std::string& ID, const SimpleDecoratorNode::TickFunctor& tick_functor,
     PortsList ports)
 {
-  NodeBuilder builder = [tick_functor, ID](const std::string& name,
-                                           const NodeConfig& config) {
+  const NodeBuilder builder = [tick_functor, ID](const std::string& name,
+                                                 const NodeConfig& config) {
     return std::make_unique<SimpleDecoratorNode>(name, tick_functor, config);
   };
 
-  TreeNodeManifest manifest = { NodeType::DECORATOR, ID, std::move(ports), {} };
+  const TreeNodeManifest manifest = { NodeType::DECORATOR, ID, std::move(ports), {} };
   registerBuilder(manifest, builder);
 }
 
@@ -193,11 +261,12 @@ void BehaviorTreeFactory::registerFromPlugin(const std::string& file_path)
 {
   BT::SharedLibrary loader;
   loader.load(file_path);
-  typedef void (*Func)(BehaviorTreeFactory&);
+  using Func = void (*)(BehaviorTreeFactory&);
 
   if(loader.hasSymbol(PLUGIN_SYMBOL))
   {
-    Func func = (Func)loader.getSymbol(PLUGIN_SYMBOL);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+    auto* func = reinterpret_cast<Func>(loader.getSymbol(PLUGIN_SYMBOL));
     func(*this);
   }
   else
@@ -207,66 +276,13 @@ void BehaviorTreeFactory::registerFromPlugin(const std::string& file_path)
   }
 }
 
-#ifdef USING_ROS
-
-#ifdef _WIN32
-const char os_pathsep(';');  // NOLINT
-#else
-const char os_pathsep(':');  // NOLINT
-#endif
-
-// This function is a copy from the one in class_loader_imp.hpp in ROS pluginlib
-// package, licensed under BSD.
-// https://github.com/ros/pluginlib
-std::vector<std::string> getCatkinLibraryPaths()
-{
-  std::vector<std::string> lib_paths;
-  const char* env = std::getenv("CMAKE_PREFIX_PATH");
-  if(env)
-  {
-    const std::string env_catkin_prefix_paths(env);
-    std::vector<BT::StringView> catkin_prefix_paths =
-        splitString(env_catkin_prefix_paths, os_pathsep);
-    for(BT::StringView catkin_prefix_path : catkin_prefix_paths)
-    {
-      std::filesystem::path path(static_cast<std::string>(catkin_prefix_path));
-      std::filesystem::path lib("lib");
-      lib_paths.push_back((path / lib).string());
-    }
-  }
-  return lib_paths;
-}
-
-void BehaviorTreeFactory::registerFromROSPlugins()
-{
-  std::vector<std::string> plugins;
-  ros::package::getPlugins("behaviortree_cpp", "bt_lib_plugin", plugins, true);
-  std::vector<std::string> catkin_lib_paths = getCatkinLibraryPaths();
-
-  for(const auto& plugin : plugins)
-  {
-    auto filename = std::filesystem::path(plugin + BT::SharedLibrary::suffix());
-    for(const auto& lib_path : catkin_lib_paths)
-    {
-      const auto full_path = std::filesystem::path(lib_path) / filename;
-      if(std::filesystem::exists(full_path))
-      {
-        std::cout << "Registering ROS plugins from " << full_path.string() << std::endl;
-        registerFromPlugin(full_path.string());
-        break;
-      }
-    }
-  }
-}
-#else
-
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 void BehaviorTreeFactory::registerFromROSPlugins()
 {
   throw RuntimeError("Using attribute [ros_pkg] in <include>, but this library was "
                      "compiled without ROS support. Recompile the BehaviorTree.CPP "
                      "using catkin");
 }
-#endif
 
 void BehaviorTreeFactory::registerBehaviorTreeFromFile(
     const std::filesystem::path& filename)
@@ -289,6 +305,7 @@ void BehaviorTreeFactory::clearRegisteredBehaviorTrees()
   _p->parser->clearInternalState();
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::unique_ptr<TreeNode> BehaviorTreeFactory::instantiateTreeNode(
     const std::string& name, const std::string& ID, const NodeConfig& config) const
 {
@@ -312,11 +329,11 @@ std::unique_ptr<TreeNode> BehaviorTreeFactory::instantiateTreeNode(
   bool substituted = false;
   for(const auto& [filter, rule] : _p->substitution_rules)
   {
-    if(filter == name || filter == ID || wildcards::match(config.path, filter))
+    if(filter == name || filter == ID || wildcards_match(config.path, filter))
     {
       // first case: the rule is simply a string with the name of the
       // node to create instead
-      if(const auto substituted_ID = std::get_if<std::string>(&rule))
+      if(const auto* const substituted_ID = std::get_if<std::string>(&rule))
       {
         auto it_builder = _p->builders.find(*substituted_ID);
         if(it_builder != _p->builders.end())
@@ -331,14 +348,45 @@ std::unique_ptr<TreeNode> BehaviorTreeFactory::instantiateTreeNode(
         substituted = true;
         break;
       }
-      else if(const auto test_config = std::get_if<TestNodeConfig>(&rule))
+
+      if(const auto* const test_config = std::get_if<TestNodeConfig>(&rule))
       {
-        // second case, the varian is a TestNodeConfig
-        auto test_node = new TestNode(name, config, *test_config);
-        node.reset(test_node);
+        node = std::make_unique<TestNode>(name, config,
+                                          std::make_shared<TestNodeConfig>(*test_config));
         substituted = true;
         break;
       }
+
+      if(const auto* const test_config =
+             std::get_if<std::shared_ptr<TestNodeConfig>>(&rule))
+      {
+        node = std::make_unique<TestNode>(name, config, *test_config);
+        substituted = true;
+        break;
+      }
+      throw LogicError("Substitution rule is not a string or a TestNodeConfig");
+    }
+  }
+
+  // A substitution rule must not turn a node into a structurally incompatible
+  // type. The XML was validated (children count, mandatory ID) against the
+  // original node type, so replacing a leaf with a SubTree, Decorator or
+  // Control leaves the builder with a node whose child or "ID" attribute the
+  // XML never supplied. That later dereferences a null child pointer or builds
+  // a std::string from a null Attribute("ID"). Allow same-type swaps and swaps
+  // to a leaf (the common "replace with a mock action" case, including the
+  // SubTree -> TestNode substitution used for mocking).
+  if(substituted)
+  {
+    const NodeType original_type = it_manifest->second.type;
+    const NodeType new_type = node->type();
+    if(new_type != original_type && new_type != NodeType::ACTION &&
+       new_type != NodeType::CONDITION)
+    {
+      throw RuntimeError("Substitution of node [", ID, "] of type [",
+                         toStr(original_type), "] with a node of type [", toStr(new_type),
+                         "] is not allowed: a substitution may only keep the same "
+                         "type or replace the node with a leaf (Action/Condition)");
     }
   }
 
@@ -395,45 +443,62 @@ const std::set<std::string>& BehaviorTreeFactory::builtinNodes() const
 Tree BehaviorTreeFactory::createTreeFromText(const std::string& text,
                                              Blackboard::Ptr blackboard)
 {
-  if(!_p->parser->registeredBehaviorTrees().empty())
+  // Determine the main tree from the XML before loading into the shared parser.
+  tinyxml2::XMLDocument doc;
+  doc.Parse(text.c_str(), text.size());
+  std::string main_tree_ID;
+  if(const auto* root = doc.RootElement())
   {
-    std::cout << "WARNING: You executed BehaviorTreeFactory::createTreeFromText "
-                 "after registerBehaviorTreeFrom[File/Text].\n"
-                 "This is NOT, probably, what you want to do.\n"
-                 "You should probably use BehaviorTreeFactory::createTree, instead"
-              << std::endl;
+    main_tree_ID = detectMainTreeId(root);
   }
-  XMLParser parser(*this);
-  parser.loadFromText(text);
-  auto tree = parser.instantiateTree(blackboard);
+
+  const std::string resolved_ID = loadXmlAndResolveTreeId(
+      _p->parser.get(), main_tree_ID, [&] { _p->parser->loadFromText(text); });
+
+  // Set the polymorphic cast registry on the blackboard (Issue #943)
+  blackboard->setPolymorphicCastRegistry(_p->polymorphic_registry);
+
+  Tree tree = resolved_ID.empty() ? _p->parser->instantiateTree(blackboard) :
+                                    _p->parser->instantiateTree(blackboard, resolved_ID);
   tree.manifests = this->manifests();
+  tree.remapManifestPointers();
   return tree;
 }
 
 Tree BehaviorTreeFactory::createTreeFromFile(const std::filesystem::path& file_path,
                                              Blackboard::Ptr blackboard)
 {
-  if(!_p->parser->registeredBehaviorTrees().empty())
+  // Determine the main tree from the XML before loading into the shared parser.
+  tinyxml2::XMLDocument doc;
+  doc.LoadFile(file_path.string().c_str());
+  std::string main_tree_ID;
+  if(const auto* root = doc.RootElement())
   {
-    std::cout << "WARNING: You executed BehaviorTreeFactory::createTreeFromFile "
-                 "after registerBehaviorTreeFrom[File/Text].\n"
-                 "This is NOT, probably, what you want to do.\n"
-                 "You should probably use BehaviorTreeFactory::createTree, instead"
-              << std::endl;
+    main_tree_ID = detectMainTreeId(root);
   }
 
-  XMLParser parser(*this);
-  parser.loadFromFile(file_path);
-  auto tree = parser.instantiateTree(blackboard);
+  const std::string resolved_ID = loadXmlAndResolveTreeId(
+      _p->parser.get(), main_tree_ID, [&] { _p->parser->loadFromFile(file_path); });
+
+  // Set the polymorphic cast registry on the blackboard (Issue #943)
+  blackboard->setPolymorphicCastRegistry(_p->polymorphic_registry);
+
+  Tree tree = resolved_ID.empty() ? _p->parser->instantiateTree(blackboard) :
+                                    _p->parser->instantiateTree(blackboard, resolved_ID);
   tree.manifests = this->manifests();
+  tree.remapManifestPointers();
   return tree;
 }
 
 Tree BehaviorTreeFactory::createTree(const std::string& tree_name,
                                      Blackboard::Ptr blackboard)
 {
+  // Set the polymorphic cast registry on the blackboard (Issue #943)
+  blackboard->setPolymorphicCastRegistry(_p->polymorphic_registry);
+
   auto tree = _p->parser->instantiateTree(blackboard, tree_name);
   tree.manifests = this->manifests();
+  tree.remapManifestPointers();
   return tree;
 }
 
@@ -474,7 +539,7 @@ void BehaviorTreeFactory::clearSubstitutionRules()
 
 void BehaviorTreeFactory::addSubstitutionRule(StringView filter, SubstitutionRule rule)
 {
-  _p->substitution_rules[std::string(filter)] = rule;
+  _p->substitution_rules[std::string(filter)] = std::move(rule);
 }
 
 void BehaviorTreeFactory::loadSubstitutionRuleFromJSON(const std::string& json_text)
@@ -483,33 +548,56 @@ void BehaviorTreeFactory::loadSubstitutionRuleFromJSON(const std::string& json_t
 
   std::unordered_map<std::string, TestNodeConfig> configs;
 
-  auto test_configs = json.at("TestNodeConfigs");
-  for(auto const& [name, test_config] : test_configs.items())
+  // TestNodeConfigs is optional: users may only have string-based
+  // substitution rules that map to already-registered node types.
+  if(json.contains("TestNodeConfigs"))
   {
-    auto& config = configs[name];
+    // Not a copy: it would recurse once per nesting level of the JSON text
+    const auto& test_configs = json.at("TestNodeConfigs");
+    for(auto const& [name, test_config] : test_configs.items())
+    {
+      auto& config = configs[name];
+      bool has_return_status = false;
 
-    auto return_status = test_config.at("return_status").get<std::string>();
-    config.return_status = convertFromString<NodeStatus>(return_status);
-    if(test_config.contains("async_delay"))
-    {
-      config.async_delay =
-          std::chrono::milliseconds(test_config["async_delay"].get<int>());
-    }
-    if(test_config.contains("post_script"))
-    {
-      config.post_script = test_config["post_script"].get<std::string>();
-    }
-    if(test_config.contains("success_script"))
-    {
-      config.success_script = test_config["success_script"].get<std::string>();
-    }
-    if(test_config.contains("failure_script"))
-    {
-      config.failure_script = test_config["failure_script"].get<std::string>();
+      if(test_config.contains("return_status"))
+      {
+        auto return_status = test_config.at("return_status").get<std::string>();
+        config.return_status = convertFromString<NodeStatus>(return_status);
+        has_return_status = true;
+      }
+      if(test_config.contains("return_status_script"))
+      {
+        config.return_status_script =
+            test_config["return_status_script"].get<std::string>();
+      }
+      if(test_config.contains("async_delay"))
+      {
+        config.async_delay =
+            std::chrono::milliseconds(details::JsonToInteger<int>(test_config["async_"
+                                                                              "delay"]));
+      }
+      if(test_config.contains("post_script"))
+      {
+        config.post_script = test_config["post_script"].get<std::string>();
+      }
+      if(test_config.contains("success_script"))
+      {
+        config.success_script = test_config["success_script"].get<std::string>();
+      }
+      if(test_config.contains("failure_script"))
+      {
+        config.failure_script = test_config["failure_script"].get<std::string>();
+      }
+
+      if(!has_return_status && config.return_status_script.empty())
+      {
+        throw RuntimeError("TestNodeConfig [", name,
+                           "] must contain return_status or return_status_script");
+      }
     }
   }
 
-  auto substitutions = json.at("SubstitutionRules");
+  const auto& substitutions = json.at("SubstitutionRules");
   for(auto const& [node_name, test] : substitutions.items())
   {
     auto test_name = test.get<std::string>();
@@ -531,20 +619,41 @@ BehaviorTreeFactory::substitutionRules() const
   return _p->substitution_rules;
 }
 
-Tree& Tree::operator=(Tree&& other)
+PolymorphicCastRegistry& BehaviorTreeFactory::polymorphicCastRegistry()
 {
-  subtrees = std::move(other.subtrees);
-  manifests = std::move(other.manifests);
-  wake_up_ = other.wake_up_;
-  return *this;
+  return *_p->polymorphic_registry;
 }
 
-Tree::Tree()
-{}
-
-Tree::Tree(Tree&& other)
+const PolymorphicCastRegistry& BehaviorTreeFactory::polymorphicCastRegistry() const
 {
-  (*this) = std::move(other);
+  return *_p->polymorphic_registry;
+}
+
+std::shared_ptr<PolymorphicCastRegistry>
+BehaviorTreeFactory::polymorphicCastRegistryPtr() const
+{
+  return _p->polymorphic_registry;
+}
+
+Tree::Tree() = default;
+
+void Tree::remapManifestPointers()
+{
+  for(auto& subtree : subtrees)
+  {
+    for(auto& node : subtree->nodes)
+    {
+      const auto* old_manifest = node->config().manifest;
+      if(old_manifest != nullptr)
+      {
+        auto it = manifests.find(old_manifest->registration_ID);
+        if(it != manifests.end())
+        {
+          node->config().manifest = &(it->second);
+        }
+      }
+    }
+  }
 }
 
 void Tree::initialize()
@@ -559,9 +668,10 @@ void Tree::initialize()
   }
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const)
 void Tree::haltTree()
 {
-  if(!rootNode())
+  if(rootNode() == nullptr)
   {
     return;
   }
@@ -574,6 +684,12 @@ void Tree::haltTree()
   BT::applyRecursiveVisitor(rootNode(), visitor);
 
   rootNode()->resetStatus();
+
+  // interrupt the sleep of tickWhileRunning(), if called from another thread
+  if(wake_up_)
+  {
+    wake_up_->emitSignal();
+  }
 }
 
 TreeNode* Tree::rootNode() const
@@ -586,9 +702,15 @@ TreeNode* Tree::rootNode() const
   return subtree_nodes.empty() ? nullptr : subtree_nodes.front().get();
 }
 
-void Tree::sleep(std::chrono::system_clock::duration timeout)
+bool Tree::sleep(std::chrono::system_clock::duration timeout)
 {
-  wake_up_->waitFor(std::chrono::duration_cast<std::chrono::milliseconds>(timeout));
+  return wake_up_->waitFor(
+      std::chrono::duration_cast<std::chrono::milliseconds>(timeout));
+}
+
+void Tree::emitWakeUpSignal()
+{
+  wake_up_->emitSignal();
 }
 
 std::shared_ptr<WakeUpSignal> Tree::wakeUpSignal() const
@@ -598,7 +720,20 @@ std::shared_ptr<WakeUpSignal> Tree::wakeUpSignal() const
 
 Tree::~Tree()
 {
-  haltTree();
+  // Halting may throw (e.g. TryCatch catch_on_halt ticks its catch child), and
+  // an exception escaping a destructor calls std::terminate (issue #1281).
+  try
+  {
+    haltTree();
+  }
+  catch(const std::exception& ex)
+  {
+    std::cerr << "[Tree::~Tree]: haltTree() threw: " << ex.what() << std::endl;
+  }
+  catch(...)
+  {
+    std::cerr << "[Tree::~Tree]: haltTree() threw an unknown exception" << std::endl;
+  }
 }
 
 NodeStatus Tree::tickExactlyOnce()
@@ -618,25 +753,33 @@ NodeStatus Tree::tickWhileRunning(std::chrono::milliseconds sleep_time)
 
 Blackboard::Ptr Tree::rootBlackboard()
 {
-  if(subtrees.size() > 0)
+  if(!subtrees.empty())
   {
     return subtrees.front()->blackboard;
   }
   return {};
 }
 
-void Tree::applyVisitor(const std::function<void(const TreeNode*)>& visitor)
+void Tree::applyVisitor(const std::function<void(const TreeNode*)>& visitor) const
 {
   BT::applyRecursiveVisitor(static_cast<const TreeNode*>(rootNode()), visitor);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const)
 void Tree::applyVisitor(const std::function<void(TreeNode*)>& visitor)
 {
-  BT::applyRecursiveVisitor(static_cast<TreeNode*>(rootNode()), visitor);
+  BT::applyRecursiveVisitor(rootNode(), visitor);
 }
 
 uint16_t Tree::getUID()
 {
+  // UIDs are 16 bits wide (and serialized as such by Groot2 and the loggers):
+  // wrapping around would silently give two nodes the same UID.
+  if(uid_counter_ == std::numeric_limits<uint16_t>::max())
+  {
+    throw RuntimeError("Tree::getUID(): too many nodes, a tree can't have more than ",
+                       std::to_string(std::numeric_limits<uint16_t>::max()), " nodes");
+  }
   auto uid = ++uid_counter_;
   return uid;
 }
@@ -650,10 +793,17 @@ NodeStatus Tree::tickRoot(TickOption opt, std::chrono::milliseconds sleep_time)
     initialize();
   }
 
-  if(!rootNode())
+  if(rootNode() == nullptr)
   {
     throw RuntimeError("Empty Tree");
   }
+
+  // haltTree() resets the root to IDLE. If that happens (from another thread)
+  // while the last tick returned RUNNING, we must not tick again, because that
+  // would restart the tree (issue #686).
+  const auto halted = [&]() {
+    return status == NodeStatus::RUNNING && rootNode()->status() == NodeStatus::IDLE;
+  };
 
   while(status == NodeStatus::IDLE ||
         (opt == TickOption::WHILE_RUNNING && status == NodeStatus::RUNNING))
@@ -662,7 +812,7 @@ NodeStatus Tree::tickRoot(TickOption opt, std::chrono::milliseconds sleep_time)
 
     // Inner loop. The previous tick might have triggered the wake-up
     // in this case, unless TickOption::EXACTLY_ONCE, we tick again
-    while(opt != TickOption::EXACTLY_ONCE && status == NodeStatus::RUNNING &&
+    while(opt != TickOption::EXACTLY_ONCE && !halted() && status == NodeStatus::RUNNING &&
           wake_up_->waitFor(std::chrono::milliseconds(0)))
     {
       status = rootNode()->executeTick();
@@ -676,6 +826,10 @@ NodeStatus Tree::tickRoot(TickOption opt, std::chrono::milliseconds sleep_time)
     {
       sleep(std::chrono::milliseconds(sleep_time));
     }
+    if(halted())
+    {
+      return NodeStatus::IDLE;
+    }
   }
 
   return status;
@@ -683,7 +837,12 @@ NodeStatus Tree::tickRoot(TickOption opt, std::chrono::milliseconds sleep_time)
 
 void BlackboardRestore(const std::vector<Blackboard::Ptr>& backup, Tree& tree)
 {
-  assert(backup.size() == tree.subtrees.size());
+  if(backup.size() != tree.subtrees.size())
+  {
+    throw RuntimeError("BlackboardRestore: the backup contains ",
+                       std::to_string(backup.size()), " blackboards, but the tree has ",
+                       std::to_string(tree.subtrees.size()), " subtrees");
+  }
   for(size_t i = 0; i < tree.subtrees.size(); i++)
   {
     backup[i]->cloneInto(*(tree.subtrees[i]->blackboard));
@@ -707,7 +866,6 @@ nlohmann::json ExportTreeToJSON(const Tree& tree)
   nlohmann::json out;
   for(const auto& subtree : tree.subtrees)
   {
-    nlohmann::json json_sub;
     auto sub_name = subtree->instance_name;
     if(sub_name.empty())
     {
@@ -725,11 +883,23 @@ void ImportTreeFromJSON(const nlohmann::json& json, Tree& tree)
     throw std::runtime_error("Number of blackboards don't match:");
   }
 
-  size_t index = 0;
-  for(auto& [key, array] : json.items())
+  // The JSON object is keyed by subtree name (see ExportTreeToJSON) and is
+  // iterated in alphabetical order, which is unrelated to the order of
+  // tree.subtrees. Look up each blackboard by name, not by position.
+  for(const auto& subtree : tree.subtrees)
   {
-    auto& subtree = tree.subtrees.at(index++);
-    ImportBlackboardFromJSON(array, *subtree->blackboard);
+    auto sub_name = subtree->instance_name;
+    if(sub_name.empty())
+    {
+      sub_name = subtree->tree_ID;
+    }
+    const auto it = json.find(sub_name);
+    if(it == json.end())
+    {
+      throw std::runtime_error(
+          StrCat("ImportTreeFromJSON: missing blackboard of subtree [", sub_name, "]"));
+    }
+    ImportBlackboardFromJSON(*it, *subtree->blackboard);
   }
 }
 

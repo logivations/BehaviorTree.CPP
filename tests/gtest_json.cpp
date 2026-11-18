@@ -1,7 +1,11 @@
-#include <gtest/gtest.h>
+#include "behaviortree_cpp/basic_types.h"
 #include "behaviortree_cpp/blackboard.h"
 #include "behaviortree_cpp/json_export.h"
-#include "behaviortree_cpp/basic_types.h"
+
+#include <tuple>
+#include <vector>
+
+#include <gtest/gtest.h>
 
 //----------- Custom types ----------
 
@@ -13,6 +17,10 @@ struct Vector3D
   double x = 0;
   double y = 0;
   double z = 0;
+  bool operator==(const Vector3D& other) const
+  {
+    return x == other.x && y == other.y && z == other.z;
+  }
 };
 
 struct Quaternion3D
@@ -21,12 +29,20 @@ struct Quaternion3D
   double x = 0;
   double y = 0;
   double z = 0;
+  bool operator==(const Quaternion3D& other) const
+  {
+    return w == other.w && x == other.x && y == other.y && z == other.z;
+  }
 };
 
 struct Pose3D
 {
   Vector3D pos;
   Quaternion3D rot;
+  bool operator==(const Pose3D& other) const
+  {
+    return pos == other.pos && rot == other.rot;
+  }
 };
 
 struct Time
@@ -35,6 +51,12 @@ struct Time
   uint32_t nsec;
 };
 
+struct Temperature
+{
+  double celsius = 0;
+};
+
+// NOLINTBEGIN(misc-use-internal-linkage)
 BT_JSON_CONVERTER(Vector3D, v)
 {
   add_field("x", &v.x);
@@ -57,17 +79,28 @@ BT_JSON_CONVERTER(Pose3D, v)
 }
 
 // specialized functions
-void jsonFromTime(const Time& t, nlohmann::json& j)
+inline void jsonFromTime(const Time& t, nlohmann::json& j)
 {
   j["stamp"] = double(t.sec) + 1e-9 * double(t.nsec);
 }
 
-void jsonToTime(const nlohmann::json& j, Time& t)
+inline void jsonToTime(const nlohmann::json& j, Time& t)
 {
   double sec = j["stamp"];
-  t.sec = int(sec);
-  t.nsec = (sec - t.sec) * 1e9;
+  t.sec = static_cast<uint32_t>(sec);
+  t.nsec = static_cast<uint32_t>((sec - t.sec) * 1e9);
 }
+
+inline void jsonFromTemperature(const Temperature& t, nlohmann::json& j)
+{
+  j["celsius"] = t.celsius;
+}
+
+inline void jsonToTemperature(const nlohmann::json& j, Temperature& t)
+{
+  t.celsius = j["celsius"];
+}
+// NOLINTEND(misc-use-internal-linkage)
 
 }  // namespace TestTypes
 
@@ -114,22 +147,21 @@ TEST_F(JsonTest, TwoWaysConversion)
   ASSERT_EQ(json["pose"]["rot"]["y"], 6);
   ASSERT_EQ(json["pose"]["rot"]["z"], 7);
 
-  // check the two-ways transform, i.e. "from_json"
-  auto pose2 = exporter.fromJson(json["pose"])->first.cast<TestTypes::Pose3D>();
-
-  ASSERT_EQ(pose.pos.x, pose2.pos.x);
-  ASSERT_EQ(pose.pos.y, pose2.pos.y);
-  ASSERT_EQ(pose.pos.z, pose2.pos.z);
-
-  ASSERT_EQ(pose.rot.w, pose2.rot.w);
-  ASSERT_EQ(pose.rot.x, pose2.rot.x);
-  ASSERT_EQ(pose.rot.y, pose2.rot.y);
-  ASSERT_EQ(pose.rot.z, pose2.rot.z);
-
-  auto num = exporter.fromJson(json["int"])->first.cast<int>();
+  auto num_result = exporter.fromJson(json["int"]);
+  ASSERT_TRUE(num_result) << num_result.error();
+  auto num = num_result->first.cast<int>();
   ASSERT_EQ(num, 69);
-  auto real = exporter.fromJson(json["real"])->first.cast<double>();
+
+  auto real_result = exporter.fromJson(json["real"]);
+  ASSERT_TRUE(real_result) << real_result.error();
+  auto real = real_result->first.cast<double>();
   ASSERT_EQ(real, 3.14);
+
+  auto pose_result = exporter.fromJson(json["pose"]);
+  ASSERT_TRUE(pose_result) << pose_result.error();
+  auto pose_out = pose_result->first.cast<TestTypes::Pose3D>();
+  ASSERT_EQ(pose.pos, pose_out.pos);
+  ASSERT_EQ(pose.rot, pose_out.rot);
 }
 
 TEST_F(JsonTest, CustomTime)
@@ -163,6 +195,46 @@ TEST_F(JsonTest, CustomTime)
   }
 }
 
+// Issue #877: the name stored in "__type" can be chosen when registering lambdas
+TEST_F(JsonTest, CustomTypeName)
+{
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+  const std::string name = "Temperature";
+  // a string literal as second argument is the type name, not add_type
+  using TestTypes::Temperature;
+  exporter.addConverter<Temperature>(TestTypes::jsonFromTemperature, "Temperature");
+  exporter.addConverter<TestTypes::Temperature>(TestTypes::jsonToTemperature, name);
+
+  TestTypes::Temperature temp = { 21.5 };
+  nlohmann::json json;
+  ASSERT_TRUE(exporter.toJson(BT::Any(temp), json));
+  ASSERT_EQ(json["__type"], name);
+
+  auto res = exporter.fromJson<TestTypes::Temperature>(json);
+  ASSERT_TRUE(res) << res.error();
+  ASSERT_EQ(res->celsius, 21.5);
+
+  // the demangled name is still accepted
+  json["__type"] = BT::demangle(typeid(TestTypes::Temperature));
+  ASSERT_TRUE(exporter.fromJson<TestTypes::Temperature>(json));
+
+  // vectors use the same name
+  std::vector<TestTypes::Temperature> temps = { { 1.5 }, { 2.5 } };
+  nlohmann::json json_vec;
+  ASSERT_TRUE(exporter.toJson(BT::Any(temps), json_vec));
+  ASSERT_EQ(json_vec[1]["__type"], name);
+
+  auto res_vec = exporter.fromJson<std::vector<TestTypes::Temperature>>(json_vec);
+  ASSERT_TRUE(res_vec) << res_vec.error();
+  ASSERT_EQ(res_vec->size(), 2u);
+  ASSERT_EQ((*res_vec)[1].celsius, 2.5);
+
+  // without a name, the demangled name of the type is used
+  TestTypes::Time stamp = { 3, 8000000 };
+  ASSERT_TRUE(exporter.toJson(BT::Any(stamp), json));
+  ASSERT_EQ(json["__type"], BT::demangle(typeid(TestTypes::Time)));
+}
+
 TEST_F(JsonTest, ConvertFromString)
 {
   TestTypes::Vector3D vect;
@@ -194,4 +266,235 @@ TEST_F(JsonTest, BlackboardInOut)
   ASSERT_EQ(vect_out.x, 1.1);
   ASSERT_EQ(vect_out.y, 2.2);
   ASSERT_EQ(vect_out.z, 3.3);
+}
+
+TEST_F(JsonTest, LargeIntegerPreserved)
+{
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+
+  // Values outside the int32 range used to be silently wrapped by get<int>().
+  {
+    auto json = nlohmann::json::parse(R"({"a": 2147483648, "b": 5000000000,
+                                          "c": 4294967296})");
+    auto bb = BT::Blackboard::create();
+    ImportBlackboardFromJSON(json, *bb);
+    ASSERT_EQ(bb->get<int64_t>("a"), 2147483648LL);
+    ASSERT_EQ(bb->get<int64_t>("b"), 5000000000LL);
+    ASSERT_EQ(bb->get<int64_t>("c"), 4294967296LL);
+  }
+  // Negative values below the int32 minimum are preserved too.
+  {
+    auto res = exporter.fromJson(nlohmann::json(int64_t(-5000000000LL)));
+    ASSERT_TRUE(res) << res.error();
+    ASSERT_EQ(res->first.cast<int64_t>(), -5000000000LL);
+  }
+  // Values that fit keep the int type, unchanged from before.
+  {
+    auto res = exporter.fromJson(nlohmann::json(100));
+    ASSERT_TRUE(res) << res.error();
+    ASSERT_EQ(res->first.cast<int>(), 100);
+  }
+  // An int64_t entry survives an Export/Import round-trip.
+  {
+    auto bb_in = BT::Blackboard::create();
+    bb_in->set("big", int64_t(5000000000LL));
+    auto bb_out = BT::Blackboard::create();
+    ImportBlackboardFromJSON(ExportBlackboardToJSON(*bb_in), *bb_out);
+    ASSERT_EQ(bb_out->get<int64_t>("big"), 5000000000LL);
+  }
+}
+
+TEST_F(JsonTest, VectorInteger)
+{
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+
+  std::vector<int> vec = { 1, 2, 3 };
+  nlohmann::json json;
+  exporter.toJson(BT::Any(vec), json["vec"]);
+
+  std::cout << json.dump(2) << std::endl;
+
+  ASSERT_EQ(json["vec"][0], 1);
+  ASSERT_EQ(json["vec"][1], 2);
+  ASSERT_EQ(json["vec"][2], 3);
+
+  auto result = exporter.fromJson(json["vec"]);
+  ASSERT_TRUE(result) << result.error();
+  auto vec_out = result->first.cast<std::vector<int>>();
+
+  ASSERT_EQ(vec.size(), vec_out.size());
+  for(size_t i = 0; i < vec.size(); ++i)
+  {
+    ASSERT_EQ(vec[i], vec_out[i]);
+  }
+}
+
+TEST_F(JsonTest, IntegerValuesAreRangeChecked)
+{
+  using nlohmann::json;
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+
+  ASSERT_EQ(BT::details::JsonToInteger<int>(json(-7)), -7);
+  ASSERT_EQ(BT::details::JsonToInteger<uint16_t>(json(65535)), 65535);
+  ASSERT_EQ(BT::details::JsonToInteger<int64_t>(json(INT64_MIN)), INT64_MIN);
+  ASSERT_EQ(BT::details::JsonToInteger<uint64_t>(json(UINT64_MAX)), UINT64_MAX);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<uint16_t>(json(65536)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<uint16_t>(json(-1)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<int>(json(2.5)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<int>(json(1e300)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<int>(json(true)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<int>(json(std::nan(""))),
+               BT::RuntimeError);
+  // A floating point value with no fractional part converts, like Any::cast<int>()
+  ASSERT_EQ(BT::details::JsonToInteger<int>(json(100.0)), 100);
+  ASSERT_EQ(BT::details::JsonToInteger<int>(json(-3.0)), -3);
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<uint16_t>(json(65536.0)),
+               BT::RuntimeError);
+  {
+    auto result = exporter.fromJson(json::parse("[1, 2.0]"));
+    ASSERT_TRUE(result);
+    ASSERT_EQ(result->first.cast<std::vector<int>>(), (std::vector<int>{ 1, 2 }));
+  }
+
+  // The type of the array is taken from the first element. The other elements
+  // used to be truncated, wrapped, or cast out of range (undefined behavior).
+  for(const char* text :
+      { "[1, 2.5]", "[1, 1e300]", "[1, 5000000000]", "[1, -3000000000]" })
+  {
+    ASSERT_THROW(std::ignore = exporter.fromJson(json::parse(text)), BT::RuntimeError)
+        << text;
+    auto bb = BT::Blackboard::create();
+    ASSERT_THROW(BT::ImportBlackboardFromJSON(
+                     json::parse(R"({"v":)" + std::string(text) + "}"), *bb),
+                 BT::RuntimeError)
+        << text;
+  }
+  auto result = exporter.fromJson(json::parse("[1, -2, 2147483647]"));
+  ASSERT_TRUE(result) << result.error();
+  ASSERT_EQ(result->first.cast<std::vector<int>>(),
+            (std::vector<int>{ 1, -2, 2147483647 }));
+
+  // Same for the "json:" prefix of a std::vector<int> port
+  ASSERT_EQ(BT::convertFromString<std::vector<int>>("json:[3, -4]"),
+            (std::vector<int>{ 3, -4 }));
+  ASSERT_THROW(std::ignore = BT::convertFromString<std::vector<int>>("json:[1e300]"),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::convertFromString<std::vector<int>>("json:[1.5]"),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::convertFromString<std::vector<int>>("json:[4294967297]"),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::convertFromString<std::vector<int>>("json:{\"a\":1}"),
+               BT::RuntimeError);
+}
+
+// nlohmann::json parses and destroys a nested value iteratively, but dumping and
+// copying it recurse once per nesting level, so a short text can exhaust the stack.
+TEST_F(JsonTest, DeeplyNestedValueDoesNotExhaustStack)
+{
+  using nlohmann::json;
+  constexpr size_t depth = 100000;
+  const std::string nested = std::string(depth, '[') + std::string(depth, ']');
+
+  // The error message used to include value.dump()
+  ASSERT_THROW(std::ignore = BT::details::JsonToInteger<int>(json::parse(nested)),
+               BT::RuntimeError);
+  ASSERT_THROW(std::ignore = BT::convertFromString<std::vector<int>>("json:" + nested),
+               BT::RuntimeError);
+
+  // fromJson() used to copy the first element to pick the type of the array
+  auto blackboard = BT::Blackboard::create();
+  BT::ImportBlackboardFromJSON(json::parse(R"({"nested":)" + nested + "}"), *blackboard);
+  ASSERT_FALSE(blackboard->getEntry("nested"));
+}
+
+TEST_F(JsonTest, VectorSring)
+{
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+  std::vector<std::string> vec = { "hello", "world" };
+  nlohmann::json json;
+  exporter.toJson(BT::Any(vec), json["vec"]);
+  std::cout << json.dump(2) << std::endl;
+  ASSERT_EQ(json["vec"][0], "hello");
+  ASSERT_EQ(json["vec"][1], "world");
+  auto result = exporter.fromJson(json["vec"]);
+  ASSERT_TRUE(result) << result.error();
+  auto vec_out = result->first.cast<std::vector<std::string>>();
+  ASSERT_EQ(vec.size(), vec_out.size());
+  for(size_t i = 0; i < vec.size(); ++i)
+  {
+    ASSERT_EQ(vec[i], vec_out[i]);
+  }
+  // check the two-ways transform, i.e. "from_json"
+  auto result2 = exporter.fromJson(json["vec"]);
+  ASSERT_TRUE(result2) << result2.error();
+  auto vec_out2 = result2->first.cast<std::vector<std::string>>();
+  ASSERT_EQ(vec.size(), vec_out2.size());
+  for(size_t i = 0; i < vec.size(); ++i)
+  {
+    ASSERT_EQ(vec[i], vec_out2[i]);
+  }
+}
+
+TEST_F(JsonTest, VectorOfCustomTypes)
+{
+  BT::JsonExporter& exporter = BT::JsonExporter::get();
+
+  std::vector<TestTypes::Pose3D> poses(2);
+  poses[0].pos = { 1, 2, 3 };
+  poses[0].rot = { 4, 5, 6, 7 };
+
+  poses[1].pos = { 8, 9, 10 };
+  poses[1].rot = { 11, 12, 13, 14 };
+
+  nlohmann::json json;
+  exporter.toJson(BT::Any(poses), json["poses"]);
+
+  std::cout << json.dump(2) << std::endl;
+
+  ASSERT_EQ(json["poses"][0]["__type"], "Pose3D");
+  ASSERT_EQ(json["poses"][0]["pos"]["x"], 1);
+  ASSERT_EQ(json["poses"][0]["pos"]["y"], 2);
+  ASSERT_EQ(json["poses"][0]["pos"]["z"], 3);
+  ASSERT_EQ(json["poses"][0]["rot"]["w"], 4);
+  ASSERT_EQ(json["poses"][0]["rot"]["x"], 5);
+  ASSERT_EQ(json["poses"][0]["rot"]["y"], 6);
+  ASSERT_EQ(json["poses"][0]["rot"]["z"], 7);
+  ASSERT_EQ(json["poses"][1]["__type"], "Pose3D");
+  ASSERT_EQ(json["poses"][1]["pos"]["x"], 8);
+  ASSERT_EQ(json["poses"][1]["pos"]["y"], 9);
+  ASSERT_EQ(json["poses"][1]["pos"]["z"], 10);
+  ASSERT_EQ(json["poses"][1]["rot"]["w"], 11);
+  ASSERT_EQ(json["poses"][1]["rot"]["x"], 12);
+  ASSERT_EQ(json["poses"][1]["rot"]["y"], 13);
+  ASSERT_EQ(json["poses"][1]["rot"]["z"], 14);
+
+  // check the two-ways transform, i.e. "from_json"
+  auto result = exporter.fromJson(json["poses"]);
+  ASSERT_TRUE(result) << result.error();
+  auto poses_out = result->first.cast<std::vector<TestTypes::Pose3D>>();
+
+  ASSERT_EQ(poses.size(), poses_out.size());
+
+  ASSERT_EQ(poses[0].pos, poses_out[0].pos);
+  ASSERT_EQ(poses[0].rot, poses_out[0].rot);
+
+  ASSERT_EQ(poses[1].pos, poses_out[1].pos);
+  ASSERT_EQ(poses[1].rot, poses_out[1].rot);
+}
+
+// The converters read the stored value through details::anyRef, which must
+// throw instead of dereferencing nullptr on an empty or mismatched BT::Any.
+TEST(JsonExporterDetails, AnyRefThrowsOnTypeMismatch)
+{
+  const std::vector<int> vec = { 1, 2, 3 };
+  EXPECT_EQ(BT::details::anyRef<std::vector<int>>(BT::Any(vec)), vec);
+  EXPECT_THROW(std::ignore = BT::details::anyRef<std::vector<int>>(BT::Any()),
+               BT::LogicError);
+  EXPECT_THROW(std::ignore = BT::details::anyRef<std::vector<double>>(BT::Any(vec)),
+               BT::LogicError);
 }

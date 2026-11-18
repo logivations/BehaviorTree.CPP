@@ -1,4 +1,4 @@
-/*  Copyright (C) 2018-2023 Davide Faconti -  All Rights Reserved
+/*  Copyright (C) 2018-2025 Davide Faconti -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -14,6 +14,7 @@
 
 #include "behaviortree_cpp/decorator_node.h"
 #include "behaviortree_cpp/utils/timer_queue.h"
+
 #include <atomic>
 
 namespace BT
@@ -40,8 +41,22 @@ public:
 
   ~DelayNode() override
   {
-    halt();
+    // Only stop the timer thread here; do NOT call halt(). During tree
+    // destruction the child node may already be gone: nodes are owned by a
+    // flat std::vector<TreeNode::Ptr> whose element-destruction order is
+    // unspecified (libstdc++ tears down front-to-back, libc++ back-to-front),
+    // so the child can outlive or predecease this decorator. halt() ->
+    // DecoratorNode::halt() -> resetChild() dereferences that child and
+    // segfaults on libc++ (macOS). This mirrors TimeoutNode's destructor.
+    // Join the timer thread here: timer_ is the first member, so it is destroyed
+    // after delay_mutex_, which its handler locks.
+    timer_.stop();
   }
+
+  DelayNode(const DelayNode&) = delete;
+  DelayNode& operator=(const DelayNode&) = delete;
+  DelayNode(DelayNode&&) = delete;
+  DelayNode& operator=(DelayNode&&) = delete;
 
   static PortsList providedPorts()
   {
@@ -52,6 +67,7 @@ public:
   void halt() override;
 
 private:
+  // Member order is frozen for ABI compatibility: do not reorder.
   TimerQueue<> timer_;
   uint64_t timer_id_;
 
@@ -61,7 +77,7 @@ private:
   std::atomic_bool delay_complete_ = false;
   bool delay_aborted_ = false;
   unsigned msec_;
-  bool read_parameter_from_ports_ = false;
+  bool read_parameter_from_ports_;
   std::mutex delay_mutex_;
 };
 

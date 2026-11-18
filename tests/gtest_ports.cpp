@@ -1,7 +1,9 @@
-#include <gtest/gtest.h>
+#include "behaviortree_cpp/basic_types.h"
 #include "behaviortree_cpp/bt_factory.h"
-#include "behaviortree_cpp/xml_parsing.h"
 #include "behaviortree_cpp/json_export.h"
+#include "behaviortree_cpp/xml_parsing.h"
+
+#include <gtest/gtest.h>
 
 using namespace BT;
 
@@ -129,6 +131,30 @@ TEST(PortTest, Descriptions)
   ASSERT_EQ(status, NodeStatus::FAILURE);  // failure because in_port_B="99"
 }
 
+TEST(PortsTest, NonPorts)
+{
+  std::string xml_txt =
+      R"(
+    <root BTCPP_format="4" >
+        <BehaviorTree ID="MainTree">
+            <Action ID="NodeWithPorts" name="NodeWithPortsName" in_port_B="66" _not_da_port="whateva" _skipIf="true" />
+        </BehaviorTree>
+    </root>)";
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<NodeWithPorts>("NodeWithPorts");
+
+  auto tree = factory.createTreeFromText(xml_txt);
+
+  const TreeNode* root = tree.rootNode();
+  ASSERT_NE(root, nullptr);
+  ASSERT_EQ(root->type(), NodeType::ACTION);
+
+  EXPECT_EQ(root->config().other_attributes.size(), 1);
+  ASSERT_EQ(root->config().other_attributes.count("_not_da_port"), 1);
+  EXPECT_EQ(root->config().other_attributes.at("_not_da_port"), "whateva");
+}
+
 struct MyType
 {
   std::string value;
@@ -197,82 +223,6 @@ TEST(PortTest, EmptyPort)
   NodeStatus status = tree.tickWhileRunning();
   // expect failure because port is not set yet
   ASSERT_EQ(status, NodeStatus::FAILURE);
-}
-
-class IllegalPorts : public SyncActionNode
-{
-public:
-  IllegalPorts(const std::string& name, const NodeConfig& config)
-    : SyncActionNode(name, config)
-  {}
-
-  NodeStatus tick() override
-  {
-    return NodeStatus::SUCCESS;
-  }
-
-  static PortsList providedPorts()
-  {
-    return { BT::InputPort<std::string>("name") };
-  }
-};
-
-TEST(PortTest, IllegalPorts)
-{
-  BehaviorTreeFactory factory;
-  ASSERT_ANY_THROW(factory.registerNodeType<IllegalPorts>("nope"));
-}
-
-class ActionVectorDoubleIn : public SyncActionNode
-{
-public:
-  ActionVectorDoubleIn(const std::string& name, const NodeConfig& config,
-                       std::vector<double>* states)
-    : SyncActionNode(name, config), states_(states)
-  {}
-
-  NodeStatus tick() override
-  {
-    getInput("states", *states_);
-    return NodeStatus::SUCCESS;
-  }
-
-  static PortsList providedPorts()
-  {
-    return { BT::InputPort<std::vector<double>>("states") };
-  }
-
-private:
-  std::vector<double>* states_;
-};
-
-TEST(PortTest, SubtreeStringInput_Issue489)
-{
-  std::string xml_txt = R"(
-    <root BTCPP_format="4" >
-      <BehaviorTree ID="Main">
-        <SubTree ID="Subtree_A" states="3;7"/>
-      </BehaviorTree>
-
-      <BehaviorTree ID="Subtree_A">
-        <ActionVectorDoubleIn states="{states}"/>
-      </BehaviorTree>
-    </root>)";
-
-  std::vector<double> states;
-
-  BehaviorTreeFactory factory;
-  factory.registerNodeType<ActionVectorDoubleIn>("ActionVectorDoubleIn", &states);
-
-  factory.registerBehaviorTreeFromText(xml_txt);
-  auto tree = factory.createTree("Main");
-
-  NodeStatus status = tree.tickWhileRunning();
-
-  ASSERT_EQ(status, NodeStatus::SUCCESS);
-  ASSERT_EQ(2, states.size());
-  ASSERT_EQ(3, states[0]);
-  ASSERT_EQ(7, states[1]);
 }
 
 class ActionVectorStringIn : public SyncActionNode
@@ -362,6 +312,7 @@ template <>
   return std::to_string(point.x) + "," + std::to_string(point.y);
 }
 
+// NOLINTNEXTLINE(misc-use-anonymous-namespace,misc-use-internal-linkage)
 BT_JSON_CONVERTER(Point2D, point)
 {
   add_field("x", &point.x);
@@ -422,81 +373,7 @@ TEST(PortTest, DefaultInput)
   ASSERT_EQ(status, NodeStatus::SUCCESS);
 }
 
-class GetAny : public SyncActionNode
-{
-public:
-  GetAny(const std::string& name, const NodeConfig& config) : SyncActionNode(name, config)
-  {}
-
-  NodeStatus tick() override
-  {
-    // case 1: the port is Any, but we can cast dirrectly to string
-    auto res_str = getInput<std::string>("val_str");
-    // case 2: the port is Any, and we retrieve an Any (to be casted later)
-    auto res_int = getInput<BT::Any>("val_int");
-
-    // case 3: port is double and we get a double
-    auto res_real_A = getInput<double>("val_real");
-    // case 4: port is double and we get an Any
-    auto res_real_B = getInput<BT::Any>("val_real");
-
-    bool expected = res_str.value() == "hello" && res_int->cast<int>() == 42 &&
-                    res_real_A.value() == 3.14 && res_real_B->cast<double>() == 3.14;
-
-    return expected ? NodeStatus::SUCCESS : NodeStatus::FAILURE;
-  }
-
-  static PortsList providedPorts()
-  {
-    return { BT::InputPort<BT::Any>("val_str"), BT::InputPort<BT::Any>("val_int"),
-             BT::InputPort<double>("val_real") };
-  }
-};
-
-class SetAny : public SyncActionNode
-{
-public:
-  SetAny(const std::string& name, const NodeConfig& config) : SyncActionNode(name, config)
-  {}
-
-  NodeStatus tick() override
-  {
-    // check that the port can contain different types
-    setOutput("val_str", BT::Any(1.0));
-    setOutput("val_str", BT::Any(1));
-    setOutput("val_str", BT::Any("hello"));
-
-    setOutput("val_int", 42);
-    setOutput("val_real", 3.14);
-    return NodeStatus::SUCCESS;
-  }
-
-  static PortsList providedPorts()
-  {
-    return { BT::OutputPort<BT::Any>("val_str"), BT::OutputPort<int>("val_int"),
-             BT::OutputPort<BT::Any>("val_real") };
-  }
-};
-
-TEST(PortTest, AnyPort)
-{
-  std::string xml_txt = R"(
-    <root BTCPP_format="4" >
-      <BehaviorTree>
-        <Sequence>
-          <SetAny val_str="{val_str}" val_int="{val_int}" val_real="{val_real}"/>
-          <GetAny val_str="{val_str}" val_int="{val_int}" val_real="{val_real}"/>
-        </Sequence>
-      </BehaviorTree>
-    </root>)";
-
-  BehaviorTreeFactory factory;
-  factory.registerNodeType<SetAny>("SetAny");
-  factory.registerNodeType<GetAny>("GetAny");
-  auto tree = factory.createTreeFromText(xml_txt);
-  auto status = tree.tickOnce();
-  ASSERT_EQ(status, NodeStatus::SUCCESS);
-}
+// NOTE: GetAny, SetAny classes and AnyPort test moved to gtest_port_type_rules.cpp
 
 class NodeWithDefaultPoints : public SyncActionNode
 {
@@ -568,7 +445,7 @@ TEST(PortTest, DefaultInputPoint2D)
   tree.subtrees.front()->blackboard->set<Point2D>("point", Point2D{ 3, 4 });
   tree.subtrees.front()->blackboard->set<Point2D>("pointD", Point2D{ 7, 8 });
 
-  BT::NodeStatus status;
+  BT::NodeStatus status = NodeStatus::IDLE;
   ASSERT_NO_THROW(status = tree.tickOnce());
   ASSERT_EQ(status, NodeStatus::SUCCESS);
 
@@ -631,7 +508,7 @@ TEST(PortTest, DefaultInputStrings)
   tree.subtrees.front()->blackboard->set<std::string>("msg", "ciao");
   tree.subtrees.front()->blackboard->set<std::string>("msgC", "hola");
 
-  BT::NodeStatus status;
+  BT::NodeStatus status = NodeStatus::IDLE;
   ASSERT_NO_THROW(status = tree.tickOnce());
   ASSERT_EQ(status, NodeStatus::SUCCESS);
 
@@ -704,4 +581,309 @@ TEST(PortTest, DefaultWronglyOverriden)
   ASSERT_ANY_THROW(auto tree = factory.createTreeFromText(xml_txt_wrong));
   // This is correct
   ASSERT_NO_THROW(auto tree = factory.createTreeFromText(xml_txt_correct));
+}
+
+// Issue #858: getInput should return the default value declared in
+// providedPorts when the XML does not specify the port.
+class ActionWithDefaultPort : public SyncActionNode
+{
+public:
+  ActionWithDefaultPort(const std::string& name, const NodeConfig& config)
+    : SyncActionNode(name, config)
+  {}
+
+  NodeStatus tick() override
+  {
+    auto res = getInput<std::string>("log_name");
+    if(!res)
+    {
+      throw RuntimeError("getInput failed: " + res.error());
+    }
+    result = res.value();
+    return NodeStatus::SUCCESS;
+  }
+
+  static PortsList providedPorts()
+  {
+    return { InputPort<std::string>("log_name", "my_default_logger", "Logger name"),
+             InputPort<std::string>("message", "Message to be logged") };
+  }
+
+  std::string result;
+};
+
+TEST(PortTest, GetInputDefaultValue_Issue858)
+{
+  // XML does NOT specify "log_name" — should use the default from providedPorts
+  std::string xml_txt = R"(
+    <root BTCPP_format="4" >
+      <BehaviorTree ID="Main">
+        <ActionWithDefaultPort message="hello"/>
+      </BehaviorTree>
+    </root>)";
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<ActionWithDefaultPort>("ActionWithDefaultPort");
+  auto tree = factory.createTreeFromText(xml_txt);
+  auto status = tree.tickWhileRunning();
+
+  ASSERT_EQ(status, NodeStatus::SUCCESS);
+
+  for(const auto& node : tree.subtrees.front()->nodes)
+  {
+    if(auto action = dynamic_cast<ActionWithDefaultPort*>(node.get()))
+    {
+      ASSERT_EQ("my_default_logger", action->result);
+    }
+  }
+}
+
+// Helper class used by Issue #969 and #1065 tests
+class CollectDoubleAction : public SyncActionNode
+{
+public:
+  CollectDoubleAction(const std::string& name, const NodeConfig& config,
+                      std::vector<double>* collected)
+    : SyncActionNode(name, config), collected_(collected)
+  {}
+
+  NodeStatus tick() override
+  {
+    double val = 0;
+    if(getInput("value", val))
+    {
+      collected_->push_back(val);
+      return NodeStatus::SUCCESS;
+    }
+    return NodeStatus::FAILURE;
+  }
+
+  static PortsList providedPorts()
+  {
+    return { BT::InputPort<double>("value") };
+  }
+
+private:
+  std::vector<double>* collected_;
+};
+
+// Issue #969: LoopNode<T> uses SharedQueue<T> (shared_ptr<deque<T>>) for its queue
+// port, but upstream nodes often produce std::vector<T>. This type mismatch causes
+// tree creation to fail.
+class ProduceVectorDoubleAction : public SyncActionNode
+{
+public:
+  ProduceVectorDoubleAction(const std::string& name, const NodeConfig& config)
+    : SyncActionNode(name, config)
+  {}
+
+  NodeStatus tick() override
+  {
+    std::vector<double> vec = { 10.0, 20.0, 30.0 };
+    setOutput("numbers", vec);
+    return NodeStatus::SUCCESS;
+  }
+
+  static PortsList providedPorts()
+  {
+    return { BT::OutputPort<std::vector<double>>("numbers") };
+  }
+};
+
+TEST(PortTest, LoopNodeAcceptsVector_Issue969)
+{
+  // An upstream node outputs std::vector<double>, and LoopDouble should be
+  // able to iterate over it without requiring manual conversion to SharedQueue.
+  std::string xml_txt = R"(
+    <root BTCPP_format="4">
+      <BehaviorTree ID="MainTree">
+        <Sequence>
+          <ProduceVectorDouble numbers="{nums}" />
+          <LoopDouble queue="{nums}" value="{val}">
+            <CollectDouble value="{val}" />
+          </LoopDouble>
+        </Sequence>
+      </BehaviorTree>
+    </root>
+  )";
+
+  std::vector<double> collected;
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<ProduceVectorDoubleAction>("ProduceVectorDouble");
+  factory.registerNodeType<CollectDoubleAction>("CollectDouble", &collected);
+  auto tree = factory.createTreeFromText(xml_txt);
+  auto status = tree.tickWhileRunning();
+
+  ASSERT_EQ(status, NodeStatus::SUCCESS);
+  ASSERT_EQ(collected.size(), 3u);
+  EXPECT_DOUBLE_EQ(collected[0], 10.0);
+  EXPECT_DOUBLE_EQ(collected[1], 20.0);
+  EXPECT_DOUBLE_EQ(collected[2], 30.0);
+}
+
+// Issue #982: A port of type std::vector<std::string> with a default empty value {}
+// gets initialized with the literal string "json:[]" instead of being empty.
+// This happens because toStr() converts {} to "json:[]", and the vector
+// convertFromString specialization doesn't handle the "json:" prefix.
+class ActionWithDefaultEmptyVector : public SyncActionNode
+{
+public:
+  ActionWithDefaultEmptyVector(const std::string& name, const NodeConfig& config,
+                               std::vector<std::string>* out_vec)
+    : SyncActionNode(name, config), out_vec_(out_vec)
+  {}
+
+  NodeStatus tick() override
+  {
+    if(!getInput("string_vector", *out_vec_))
+    {
+      return NodeStatus::FAILURE;
+    }
+    return NodeStatus::SUCCESS;
+  }
+
+  static PortsList providedPorts()
+  {
+    return { BT::InputPort<std::vector<std::string>>("string_vector", {},
+                                                     "A string vector") };
+  }
+
+private:
+  std::vector<std::string>* out_vec_;
+};
+
+TEST(PortTest, DefaultEmptyVector_Issue982)
+{
+  // Port has default value {} (empty vector) and no input specified in XML.
+  // The vector should be empty, not contain "json:[]".
+  std::string xml_txt = R"(
+    <root BTCPP_format="4">
+      <BehaviorTree ID="MainTree">
+        <ActionWithDefaultEmptyVector />
+      </BehaviorTree>
+    </root>
+  )";
+
+  std::vector<std::string> result;
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<ActionWithDefaultEmptyVector>("ActionWithDefaultEmptyVector",
+                                                         &result);
+  auto tree = factory.createTreeFromText(xml_txt);
+  auto status = tree.tickWhileRunning();
+
+  ASSERT_EQ(status, NodeStatus::SUCCESS);
+  ASSERT_TRUE(result.empty()) << "Expected empty vector, but got " << result.size()
+                              << " element(s). First element: \""
+                              << (result.empty() ? "" : result[0]) << "\"";
+}
+
+// Issue #989: JsonExporter::addConverter(std::function) had a use-after-move
+// bug where `converter` was moved into to_json_converters_ before
+// `vector_converter` captured it, causing bad_function_call at runtime.
+namespace
+{
+struct TestPoint989
+{
+  double x = 0;
+  double y = 0;
+};
+
+void TestPoint989ToJson(const TestPoint989& p, nlohmann::json& j)
+{
+  j["x"] = p.x;
+  j["y"] = p.y;
+}
+
+void TestPoint989FromJson(const nlohmann::json& j, TestPoint989& p)
+{
+  p.x = j.at("x").get<double>();
+  p.y = j.at("y").get<double>();
+}
+}  // namespace
+
+TEST(PortTest, JsonExporterVectorConverter_Issue989)
+{
+  auto& exporter = JsonExporter::get();
+  exporter.addConverter<TestPoint989>(&TestPoint989ToJson);
+  exporter.addConverter<TestPoint989>(&TestPoint989FromJson);
+
+  // Single element conversion should work
+  {
+    BT::Any any_val(TestPoint989{ 1.0, 2.0 });
+    nlohmann::json j;
+    ASSERT_TRUE(exporter.toJson(any_val, j));
+    EXPECT_DOUBLE_EQ(j["x"].get<double>(), 1.0);
+    EXPECT_DOUBLE_EQ(j["y"].get<double>(), 2.0);
+  }
+
+  // Vector conversion must not throw bad_function_call
+  {
+    std::vector<TestPoint989> vec = { { 1.0, 2.0 }, { 3.0, 4.0 } };
+    BT::Any any_vec(vec);
+    nlohmann::json j;
+    ASSERT_NO_THROW(ASSERT_TRUE(exporter.toJson(any_vec, j)));
+    ASSERT_EQ(j.size(), 2u);
+    EXPECT_DOUBLE_EQ(j[0]["x"].get<double>(), 1.0);
+    EXPECT_DOUBLE_EQ(j[0]["y"].get<double>(), 2.0);
+    EXPECT_DOUBLE_EQ(j[1]["x"].get<double>(), 3.0);
+    EXPECT_DOUBLE_EQ(j[1]["y"].get<double>(), 4.0);
+  }
+}
+
+// Issue #1065: passing a string literal like "1;2;3" through a SubTree port
+// to a LoopDouble node should work, but fails because the subtree remapping
+// stores the value as a plain std::string in the blackboard without converting
+// it to SharedQueue<double>.
+TEST(PortTest, SubtreeStringLiteralToLoopDouble_Issue1065)
+{
+  // The main tree passes a string literal "1;2;3" to the subtree port "queue".
+  // Inside the subtree, LoopDouble should parse it and iterate over the values.
+  std::string xml_txt = R"(
+    <root BTCPP_format="4">
+      <BehaviorTree ID="MainTree">
+        <SubTree ID="LoopSubTree" queue="1;2;3" />
+      </BehaviorTree>
+
+      <BehaviorTree ID="LoopSubTree">
+        <LoopDouble queue="{queue}" value="{number}">
+          <CollectDouble value="{number}" />
+        </LoopDouble>
+      </BehaviorTree>
+    </root>
+  )";
+
+  std::vector<double> collected;
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<CollectDoubleAction>("CollectDouble", &collected);
+  factory.registerBehaviorTreeFromText(xml_txt);
+
+  auto tree = factory.createTree("MainTree");
+  auto status = tree.tickWhileRunning();
+
+  ASSERT_EQ(status, NodeStatus::SUCCESS);
+  ASSERT_EQ(collected.size(), 3u);
+  EXPECT_DOUBLE_EQ(collected[0], 1.0);
+  EXPECT_DOUBLE_EQ(collected[1], 2.0);
+  EXPECT_DOUBLE_EQ(collected[2], 3.0);
+}
+
+TEST(PortTest, IsBlackboardPointerAllWhitespaceView)
+{
+  // A view made only of spaces must not be read past its end while trimming.
+  // Use a buffer that is not null-terminated so AddressSanitizer catches the
+  // over-read on the character after the last space.
+  std::vector<char> only_spaces(3, ' ');
+  const StringView spaces_view(only_spaces.data(), only_spaces.size());
+  EXPECT_FALSE(TreeNode::isBlackboardPointer(spaces_view));
+
+  // Trimming and detection of real pointers is unchanged.
+  StringView stripped;
+  EXPECT_TRUE(TreeNode::isBlackboardPointer("{key}", &stripped));
+  EXPECT_EQ(stripped, "key");
+  EXPECT_TRUE(TreeNode::isBlackboardPointer("  {key}  ", &stripped));
+  EXPECT_EQ(stripped, "key");
+  EXPECT_FALSE(TreeNode::isBlackboardPointer("value"));
 }

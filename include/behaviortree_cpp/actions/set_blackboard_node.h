@@ -1,4 +1,4 @@
-/*  Copyright (C) 2018-2020 Davide Faconti, Eurecat -  All Rights Reserved
+/*  Copyright (C) 2018-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -14,6 +14,8 @@
 #define ACTION_SETBLACKBOARD_NODE_H
 
 #include "behaviortree_cpp/action_node.h"
+
+#include <mutex>
 
 namespace BT
 {
@@ -44,7 +46,7 @@ public:
 
   static PortsList providedPorts()
   {
-    return { InputPort("value", "Value to be written int othe output_key"),
+    return { InputPort("value", "Value to be written into the output_key"),
              BidirectionalPort("output_key", "Name of the blackboard entry where the "
                                              "value should be written") };
   }
@@ -61,29 +63,66 @@ private:
     const std::string value_str = config().input_ports.at("value");
 
     StringView stripped_key;
+    BT::Any out_value;
+
+    std::shared_ptr<Blackboard::Entry> dst_entry =
+        config().blackboard->getEntry(output_key);
+
     if(isBlackboardPointer(value_str, &stripped_key))
     {
       const auto input_key = std::string(stripped_key);
       std::shared_ptr<Blackboard::Entry> src_entry =
           config().blackboard->getEntry(input_key);
-      std::shared_ptr<Blackboard::Entry> dst_entry =
-          config().blackboard->getEntry(output_key);
 
       if(!src_entry)
       {
         throw RuntimeError("Can't find the port referred by [value]");
       }
+      // Entry::value and Entry::info are shared with any thread that writes
+      // the same entry (Blackboard::set holds entry_mutex while reassigning
+      // them), so they must be copied under the same mutex.
+      std::unique_lock src_lock(src_entry->entry_mutex);
+      out_value = src_entry->value;
+      const TypeInfo src_info = src_entry->info;
+      src_lock.unlock();
       if(!dst_entry)
       {
-        config().blackboard->createEntry(output_key, src_entry->info);
+        config().blackboard->createEntry(output_key, src_info);
         dst_entry = config().blackboard->getEntry(output_key);
       }
-      dst_entry->value = src_entry->value;
     }
     else
     {
-      config().blackboard->set(output_key, value_str);
+      out_value = BT::Any(value_str);
     }
+
+    if(out_value.empty())
+      return NodeStatus::FAILURE;
+
+    // avoid type issues when port is remapped: current implementation of the set might be a little bit problematic for initialized on the fly values
+    // this still does not attack math issues
+    if(dst_entry && out_value.isString())
+    {
+      // same as above: Entry::info may be reassigned under entry_mutex by a
+      // concurrent Blackboard::set, so take a copy under the same mutex.
+      std::unique_lock dst_lock(dst_entry->entry_mutex);
+      const TypeInfo dst_info = dst_entry->info;
+      dst_lock.unlock();
+      if(dst_info.type() != typeid(std::string))
+      {
+        try
+        {
+          out_value = dst_info.parseString(out_value.cast<std::string>());
+        }
+        catch(const std::exception& e)
+        {
+          throw LogicError("Can't convert string [", out_value.cast<std::string>(),
+                           "] to type [", BT::demangle(dst_info.type()), "]: ", e.what());
+        }
+      }
+    }
+
+    config().blackboard->set(output_key, out_value);
 
     return NodeStatus::SUCCESS;
   }

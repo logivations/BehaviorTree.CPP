@@ -1,5 +1,7 @@
 #include "behaviortree_cpp/json_export.h"
 
+#include <limits>
+
 namespace BT
 {
 
@@ -11,7 +13,6 @@ JsonExporter& JsonExporter::get()
 
 bool JsonExporter::toJson(const Any& any, nlohmann::json& dst) const
 {
-  nlohmann::json json;
   auto const& type = any.castedType();
 
   if(any.isString())
@@ -29,6 +30,22 @@ bool JsonExporter::toJson(const Any& any, nlohmann::json& dst) const
   else if(type == typeid(double))
   {
     dst = any.cast<double>();
+  }
+  else if(type == typeid(std::vector<double>))
+  {
+    dst = any.cast<std::vector<double>>();
+  }
+  else if(type == typeid(std::vector<int>))
+  {
+    dst = any.cast<std::vector<int>>();
+  }
+  else if(type == typeid(std::vector<std::string>))
+  {
+    dst = any.cast<std::vector<std::string>>();
+  }
+  else if(type == typeid(std::vector<bool>))
+  {
+    dst = any.cast<std::vector<bool>>();
   }
   else
   {
@@ -49,20 +66,35 @@ JsonExporter::ExpectedEntry JsonExporter::fromJson(const nlohmann::json& source)
 {
   if(source.is_null())
   {
-    return nonstd::make_unexpected("json object is null");
+    return Entry{ BT::Any(), BT::TypeInfo::Create<std::nullptr_t>() };
   }
+
   if(source.is_string())
   {
     return Entry{ BT::Any(source.get<std::string>()),
                   BT::TypeInfo::Create<std::string>() };
   }
+  // get<int>() silently wraps any value outside the int range, so keep the
+  // width when the number doesn't fit. This lets an int64_t/uint64_t entry
+  // survive an export/import round-trip instead of coming back truncated.
   if(source.is_number_unsigned())
   {
-    return Entry{ BT::Any(source.get<uint64_t>()), BT::TypeInfo::Create<uint64_t>() };
+    const uint64_t value = source.get<uint64_t>();
+    if(value <= static_cast<uint64_t>(std::numeric_limits<int>::max()))
+    {
+      return Entry{ BT::Any(static_cast<int>(value)), BT::TypeInfo::Create<int>() };
+    }
+    return Entry{ BT::Any(value), BT::TypeInfo::Create<uint64_t>() };
   }
   if(source.is_number_integer())
   {
-    return Entry{ BT::Any(source.get<int64_t>()), BT::TypeInfo::Create<int64_t>() };
+    const int64_t value = source.get<int64_t>();
+    if(value >= static_cast<int64_t>(std::numeric_limits<int>::min()) &&
+       value <= static_cast<int64_t>(std::numeric_limits<int>::max()))
+    {
+      return Entry{ BT::Any(static_cast<int>(value)), BT::TypeInfo::Create<int>() };
+    }
+    return Entry{ BT::Any(value), BT::TypeInfo::Create<int64_t>() };
   }
   if(source.is_number_float())
   {
@@ -73,17 +105,66 @@ JsonExporter::ExpectedEntry JsonExporter::fromJson(const nlohmann::json& source)
     return Entry{ BT::Any(source.get<bool>()), BT::TypeInfo::Create<bool>() };
   }
 
-  if(!source.contains("__type"))
+  // basic vectors
+  if(source.is_array() && source.size() > 0 && !source.contains("__type"))
   {
-    return nonstd::make_unexpected("Missing field '__type'");
+    // Not a copy: it would recurse once per nesting level of the untrusted value
+    const auto& first_element = source[0];
+    if(first_element.is_string())
+    {
+      return Entry{ BT::Any(source.get<std::vector<std::string>>()),
+                    BT::TypeInfo::Create<std::vector<std::string>>() };
+    }
+    if(first_element.is_number_integer())
+    {
+      // the type comes from the first element only: check every element
+      std::vector<int> values;
+      values.reserve(source.size());
+      for(const auto& element : source)
+      {
+        values.push_back(details::JsonToInteger<int>(element));
+      }
+      return Entry{ BT::Any(values), BT::TypeInfo::Create<std::vector<int>>() };
+    }
+    if(first_element.is_number_float())
+    {
+      return Entry{ BT::Any(source.get<std::vector<double>>()),
+                    BT::TypeInfo::Create<std::vector<double>>() };
+    }
+    if(first_element.is_boolean())
+    {
+      return Entry{ BT::Any(source.get<std::vector<bool>>()),
+                    BT::TypeInfo::Create<std::vector<bool>>() };
+    }
   }
-  auto type_it = type_names_.find(source["__type"]);
+
+  if(source.is_array())
+  {
+    if(source.empty())
+      return nonstd::make_unexpected("Missing field '__type'");
+    const auto& first = source[0];
+    if(!first.is_object() || !first.contains("__type"))
+      return nonstd::make_unexpected("Missing field '__type'");
+    if(!first["__type"].is_string())
+      return nonstd::make_unexpected("Invalid '__type' (must be string)");
+  }
+  else
+  {
+    if(!source.is_object() || !source.contains("__type") || !source["__type"].is_string())
+      return nonstd::make_unexpected("Missing field '__type'");
+  }
+
+  auto& from_converters =
+      source.is_array() ? from_json_array_converters_ : from_json_converters_;
+  auto type_field = source.is_array() ? source[0]["__type"] : source["__type"];
+
+  auto type_it = type_names_.find(type_field);
   if(type_it == type_names_.end())
   {
     return nonstd::make_unexpected("Type not found in registered list");
   }
-  auto func_it = from_json_converters_.find(type_it->second.type());
-  if(func_it == from_json_converters_.end())
+  auto func_it = from_converters.find(type_it->second.type());
+  if(func_it == from_converters.end())
   {
     return nonstd::make_unexpected("Type not found in registered list");
   }
