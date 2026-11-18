@@ -1,18 +1,18 @@
 #pragma once
 
+#include "behaviortree_cpp/contrib/expected.hpp"
+#include "behaviortree_cpp/exceptions.h"
+#include "behaviortree_cpp/utils/safe_any.hpp"
+
 #include <chrono>
-#include <iostream>
 #include <functional>
+#include <iostream>
 #include <string_view>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
-
-#include "behaviortree_cpp/utils/safe_any.hpp"
-#include "behaviortree_cpp/exceptions.h"
-#include "behaviortree_cpp/contrib/expected.hpp"
 
 namespace BT
 {
@@ -183,6 +183,10 @@ template <>
 template <>
 [[nodiscard]] std::vector<double> convertFromString<std::vector<double>>(StringView str);
 
+// Boolean values separated by the character ";"
+template <>
+[[nodiscard]] std::vector<bool> convertFromString<std::vector<bool>>(StringView str);
+
 // Strings separated by the character ";"
 template <>
 [[nodiscard]] std::vector<std::string>
@@ -342,6 +346,13 @@ struct Timestamp
 
 [[nodiscard]] bool IsAllowedPortName(StringView str);
 
+[[nodiscard]] bool IsReservedAttribute(StringView str);
+
+/// Returns the first forbidden character found in the name, or '\0' if valid.
+/// Forbidden characters include: space, tab, newline, CR, < > & " ' / \ : * ? | .
+/// and control characters (ASCII 0-31, 127). UTF-8 multibyte sequences are allowed.
+[[nodiscard]] char findForbiddenChar(StringView name);
+
 class TypeInfo
 {
 public:
@@ -412,8 +423,11 @@ public:
     {
       default_value_str_ = BT::toStr(default_value);
     }
+    // NOLINTNEXTLINE(bugprone-empty-catch)
     catch(LogicError&)
-    {}
+    {
+      // conversion to string not available for this type, ignore
+    }
   }
 
   [[nodiscard]] const std::string& description() const;

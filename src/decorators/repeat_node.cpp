@@ -1,5 +1,5 @@
 /* Copyright (C) 2015-2018 Michele Colledanchise -  All Rights Reserved
- * Copyright (C) 2018-2020 Davide Faconti, Eurecat -  All Rights Reserved
+ * Copyright (C) 2018-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -43,19 +43,12 @@ NodeStatus RepeatNode::tick()
   }
 
   bool do_loop = repeat_count_ < num_cycles_ || num_cycles_ == -1;
-  if(status() == NodeStatus::IDLE)
-  {
-    all_skipped_ = true;
-  }
   setStatus(NodeStatus::RUNNING);
 
   while(do_loop)
   {
-    NodeStatus const prev_status = child_node_->status();
-    NodeStatus child_status = child_node_->executeTick();
-
-    // switch to RUNNING state as soon as you find an active child
-    all_skipped_ &= (child_status == NodeStatus::SKIPPED);
+    const NodeStatus prev_status = child_node_->status();
+    const NodeStatus child_status = child_node_->executeTick();
 
     switch(child_status)
     {
@@ -66,7 +59,7 @@ NodeStatus RepeatNode::tick()
         resetChild();
 
         // Return the execution flow if the child is async,
-        // to make this interruptable.
+        // to make this interruptible.
         if(requiresWakeUp() && prev_status == NodeStatus::IDLE && do_loop)
         {
           emitWakeUpSignal();
@@ -99,7 +92,7 @@ NodeStatus RepeatNode::tick()
   }
 
   repeat_count_ = 0;
-  return all_skipped_ ? NodeStatus::SKIPPED : NodeStatus::SUCCESS;
+  return NodeStatus::SUCCESS;
 }
 
 void RepeatNode::halt()

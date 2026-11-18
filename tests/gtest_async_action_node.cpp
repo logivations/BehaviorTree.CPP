@@ -9,8 +9,8 @@
 #include <string>
 #include <thread>
 
-#include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <gtest/gtest.h>
 
 // The mocked version of the base.
 struct MockedThreadedAction : public BT::ThreadedAction
@@ -21,6 +21,7 @@ struct MockedThreadedAction : public BT::ThreadedAction
   // Tick while the node is running.
   BT::NodeStatus spinUntilDone()
   {
+    // NOLINTNEXTLINE(cppcoreguidelines-avoid-do-while)
     do
     {
       executeTick();
@@ -70,7 +71,7 @@ TEST_P(NodeStatusFixture, normal_routine)
 TEST_F(MockedThreadedActionFixture, no_halt)
 {
   // Test verifies that halt returns immediately, if the node is idle. It
-  // further checks if the halt-flag is resetted correctly.
+  // further checks if the halt-flag is reset correctly.
   sn.halt();
   ASSERT_TRUE(sn.isHaltRequested());
 

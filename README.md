@@ -1,12 +1,11 @@
 ![License MIT](https://img.shields.io/github/license/BehaviorTree/BehaviorTree.CPP?color=blue)
-![Version](https://img.shields.io/badge/version-4.6-blue.svg)
 [![conan Ubuntu](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/cmake_ubuntu.yml/badge.svg)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/cmake_ubuntu.yml)
 [![conan Windows](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/cmake_windows.yml/badge.svg)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/cmake_windows.yml)
-[![ros1](https://github.com/BehaviorTree/BehaviorTree.CPP/workflows/ros1/badge.svg?branch=master)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions?query=workflow%3Aros1)
-[![ros2](https://github.com/BehaviorTree/BehaviorTree.CPP/workflows/ros2/badge.svg?branch=master)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions?query=workflow%3Aros2)
+[![ros2](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/ros2.yaml/badge.svg)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/ros2.yaml)
 [![pixi (Conda)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/pixi.yaml/badge.svg)](https://github.com/BehaviorTree/BehaviorTree.CPP/actions/workflows/pixi.yaml)
+[![Coverage Status](https://coveralls.io/repos/github/BehaviorTree/BehaviorTree.CPP/badge.svg?branch=master)](https://coveralls.io/github/BehaviorTree/BehaviorTree.CPP?branch=master)
 
-# BehaviorTree.CPP 4.6
+# BehaviorTree.CPP 4.9
 
 <p align="center"><img width=350 src="animated.svg"></p>
 
@@ -16,7 +15,7 @@ It was designed to be flexible, easy to use, reactive and fast.
 Even if our main use-case is __robotics__, you can use this library to build
 __AI for games__, or to replace Finite State Machines.
 
-There are few features which make __BehaviorTree.CPP__ unique, when compared to other implementations:
+There are a few features that make __BehaviorTree.CPP__ unique, when compared to other implementations:
 
 - It makes __asynchronous Actions__, i.e. non-blocking, a first-class citizen.
 
@@ -31,53 +30,53 @@ and load them at run-time.
   Nodes of the Tree.
 
 - It includes a __logging/profiling__ infrastructure that allows the user
-to visualize, record, replay and analyze state transitions.
+to visualize, record, replay, and analyze state transitions.
 
-## Documentation and Community
+## Documentation
 
-You can learn about the main concepts, the API and the tutorials here: https://www.behaviortree.dev/
-
-If the documentation doesn't answer your questions and/or you want to
-connect with the other **BT.CPP** users, visit [our forum](https://github.com/BehaviorTree/BehaviorTree.CPP/discussions)
+- **Tutorials and general documentation**: https://www.behaviortree.dev/
+- **Auto-generated Doxygen**: https://behaviortree.github.io/BehaviorTree.CPP/
+- **Community support and forum**: https://github.com/BehaviorTree/BehaviorTree.CPP/discussions
 
 # GUI Editor
 
 Editing a BehaviorTree is as simple as editing an XML file in your favorite text editor.
 
-If you are looking for a more fancy graphical user interface (and I know you do) check
+If you are looking for a fancier graphical user interface (and I know you do) check
 [Groot2](https://www.behaviortree.dev/groot) out.
 
 ![Groot screenshot](docs/groot-screenshot.png)
 
 # How to compile
 
-**BT.CPP** requires a compile that supports c++17.
+**BT.CPP** requires a compiler that supports C++17.
 
 Three build systems are supported:
 
-- **catkin**, if you use ROS
 - **colcon (ament)**, if you use ROS2
 - **conan** otherwise (Linux/Windows).
 - **straight cmake** if you want to be personally responsible for dependencies :)
 
 Compiling with [conan](https://conan.io/):
 
-Assuming that you are in the **parent** directory of `BehaviorTree.CPP`:
+> [!NOTE]
+> Conan builds require CMake 3.23 or newer.
+
+Assuming that you are in the **root** directory of `BehaviorTree.CPP`:
 
 ```
-mkdir build; cd build
-conan install ../BehaviorTree.CPP --output-folder=. --build=missing
-cmake ../BehaviorTree.CPP -DCMAKE_TOOLCHAIN_FILE="conan_toolchain.cmake"
-cmake --build . --parallel
+conan install . -s build_type=Release --build=missing
+cmake --preset conan-release
+cmake --build --preset conan-release
 ```
 
 If you have dependencies such as ZeroMQ and SQlite already installed and you don't want to
 use conan, simply type:
 
 ```
-mkdir build; cd build
-cmake ../BehaviorTree.CPP
-cmake --build . --parallel
+mkdir build_release
+cmake -S . -B build_release
+cmake --build build_release --parallel
 ```
 
 If you want to build in a [pixi](https://pixi.sh/) project (conda virtual environment).
@@ -88,14 +87,22 @@ pixi run build
 If you want to use BT.CPP in your application, please refer to the
 example here: https://github.com/BehaviorTree/btcpp_sample .
 
-# Commercial support
+## Installing BehaviorTree.CPP (vcpkg)
 
-Are you using BT.CPP in your commercial product and do you need technical support / consulting?
+Alternatively, you can build and install behaviortree-cpp using [vcpkg](https://github.com/Microsoft/vcpkg/) dependency manager:
+
+    git clone https://github.com/Microsoft/vcpkg.git
+    cd vcpkg
+    ./bootstrap-vcpkg.sh
+    ./vcpkg integrate install
+    ./vcpkg install behaviortree-cpp
+
+The behaviortree-cpp port in vcpkg is kept up to date by Microsoft team members and community contributors. If the version is out of date, please [create an issue or pull request](https://github.com/Microsoft/vcpkg) on the vcpkg repository.
+
+#  Commercial support
+
+Are you using BT.CPP in your commercial product, and do you need technical support / consulting?
 You can contact the primary author, **dfaconti@aurynrobotics.com**, to discuss your use case and needs.
-
-# Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=BehaviorTree/BehaviorTree.CPP&type=Date)](https://star-history.com/#BehaviorTree/BehaviorTree.CPP&Date)
 
 ## Previous version
 
@@ -105,11 +112,21 @@ Version 3.8 of the software can be found in the branch
 That branch might receive bug fixes, but the new features will be implemented
 only in the master branch.
 
+# Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=BehaviorTree/BehaviorTree.CPP&type=Date)](https://star-history.com/#BehaviorTree/BehaviorTree.CPP&Date)
+
+# Contributors
+
+<a href="https://github.com/BehaviorTree/BehaviorTree.CPP/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=BehaviorTree/BehaviorTree.CPP" />
+</a>
+
 # License
 
 The MIT License (MIT)
 
-Copyright (c) 2019-2023 Davide Faconti
+Copyright (c) 2019-2026 Davide Faconti
 
 Copyright (c) 2018-2019 Davide Faconti, Eurecat
 

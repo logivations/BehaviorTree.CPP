@@ -1,5 +1,5 @@
 /* Copyright (C) 2015-2018 Michele Colledanchise -  All Rights Reserved
- * Copyright (C) 2018-2022 Davide Faconti, Eurecat -  All Rights Reserved
+ * Copyright (C) 2018-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -39,7 +39,12 @@ public:
 
   RepeatNode(const std::string& name, const NodeConfig& config);
 
-  virtual ~RepeatNode() override = default;
+  ~RepeatNode() override = default;
+
+  RepeatNode(const RepeatNode&) = delete;
+  RepeatNode& operator=(const RepeatNode&) = delete;
+  RepeatNode(RepeatNode&&) = delete;
+  RepeatNode& operator=(RepeatNode&&) = delete;
 
   static PortsList providedPorts()
   {
@@ -50,7 +55,6 @@ public:
 private:
   int num_cycles_;
   int repeat_count_;
-  bool all_skipped_ = true;
 
   bool read_parameter_from_ports_;
   static constexpr const char* NUM_CYCLES = "num_cycles";

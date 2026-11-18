@@ -1,16 +1,19 @@
-#include <gtest/gtest.h>
-#include <string>
+#include "action_test_node.h"
+#include "test_helper.hpp"
+
 #include "behaviortree_cpp/basic_types.h"
 #include "behaviortree_cpp/bt_factory.h"
-#include "test_helper.hpp"
-#include "action_test_node.h"
+
+#include <string>
+
+#include <gtest/gtest.h>
 
 using namespace BT;
 
 TEST(SkippingLogic, Sequence)
 {
   BehaviorTreeFactory factory;
-  std::array<int, 2> counters;
+  std::array<int, 2> counters{};
   RegisterTestTick(factory, "Test", counters);
 
   const std::string xml_text = R"(
@@ -35,7 +38,7 @@ TEST(SkippingLogic, Sequence)
 TEST(SkippingLogic, SkipAll)
 {
   BehaviorTreeFactory factory;
-  std::array<int, 3> counters;
+  std::array<int, 3> counters{};
   RegisterTestTick(factory, "Test", counters);
 
   const std::string xml_text = R"(
@@ -63,7 +66,7 @@ TEST(SkippingLogic, SkipAll)
 TEST(SkippingLogic, SkipSubtree)
 {
   BehaviorTreeFactory factory;
-  std::array<int, 3> counters;
+  std::array<int, 3> counters{};
   RegisterTestTick(factory, "Test", counters);
 
   const std::string xml_text = R"(
@@ -117,7 +120,7 @@ TEST(SkippingLogic, ReactiveSingleChild)
 TEST(SkippingLogic, SkippingReactiveSequence)
 {
   BehaviorTreeFactory factory;
-  std::array<int, 2> counters;
+  std::array<int, 2> counters{};
   RegisterTestTick(factory, "Test", counters);
 
   const std::string xml_text_noskip = R"(
@@ -167,17 +170,17 @@ TEST(SkippingLogic, SkippingReactiveSequence)
       ASSERT_EQ(status, NodeStatus::SUCCESS);
     }
   }
-  // counters[0] contains the number ot times TestA was ticked
+  // counters[0] contains the number of times TestA was ticked
   ASSERT_EQ(counters[0], expected_test_A_ticks);
 
-  // counters[1] contains the number ot times TestB was ticked
+  // counters[1] contains the number of times TestB was ticked
   ASSERT_EQ(counters[1], 0);
 }
 
 TEST(SkippingLogic, WhileSkip)
 {
   BehaviorTreeFactory factory;
-  std::array<int, 2> counters;
+  std::array<int, 2> counters{};
   RegisterTestTick(factory, "Test", counters);
 
   const std::string xml_text_noskip = R"(
@@ -210,9 +213,9 @@ TEST(SkippingLogic, WhileSkip)
     NodeStatus status = tree.tickWhileRunning();
     ASSERT_EQ(status, NodeStatus::SUCCESS);
   }
-  // counters[0] contains the number ot times TestA was ticked
+  // counters[0] contains the number of times TestA was ticked
   ASSERT_EQ(counters[0], 1);
 
-  // counters[1] contains the number ot times TestB was ticked
+  // counters[1] contains the number of times TestB was ticked
   ASSERT_EQ(counters[1], 0);
 }

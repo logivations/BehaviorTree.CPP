@@ -1,5 +1,5 @@
 /* Copyright (C) 2018 Michele Colledanchise -  All Rights Reserved
- * Copyright (C) 2018-2023 Davide Faconti - All Rights Reserved
+ * Copyright (C) 2018-2025 Davide Faconti - All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -14,15 +14,17 @@
 #ifndef BT_FACTORY_H
 #define BT_FACTORY_H
 
+#include "behaviortree_cpp/behavior_tree.h"
+#include "behaviortree_cpp/contrib/json.hpp"
+#include "behaviortree_cpp/contrib/magic_enum.hpp"
+#include "behaviortree_cpp/utils/polymorphic_cast_registry.hpp"
+
 #include <filesystem>
 #include <functional>
 #include <memory>
-#include <unordered_map>
 #include <set>
+#include <unordered_map>
 #include <vector>
-
-#include "behaviortree_cpp/contrib/magic_enum.hpp"
-#include "behaviortree_cpp/behavior_tree.h"
 
 namespace BT
 {
@@ -77,8 +79,10 @@ inline TreeNodeManifest CreateManifest(const std::string& ID,
 * See examples in sample_nodes directory.
 */
 
+// NOLINTBEGIN(cppcoreguidelines-macro-usage,bugprone-macro-parentheses)
 #define BT_REGISTER_NODES(factory)                                                       \
   BTCPP_EXPORT void BT_RegisterNodesFromPlugin(BT::BehaviorTreeFactory& factory)
+// NOLINTEND(cppcoreguidelines-macro-usage,bugprone-macro-parentheses)
 
 constexpr const char* PLUGIN_SYMBOL = "BT_RegisterNodesFromPlugin";
 
@@ -109,8 +113,8 @@ public:
   Tree(const Tree&) = delete;
   Tree& operator=(const Tree&) = delete;
 
-  Tree(Tree&& other);
-  Tree& operator=(Tree&& other);
+  Tree(Tree&& other) = default;
+  Tree& operator=(Tree&& other) = default;
 
   void initialize();
 
@@ -118,10 +122,20 @@ public:
 
   [[nodiscard]] TreeNode* rootNode() const;
 
-  /// Sleep for a certain amount of time.
-  /// This sleep could be interrupted by the method
-  /// TreeNode::emitWakeUpSignal()
-  void sleep(std::chrono::system_clock::duration timeout);
+  /**
+    * @brief Sleep for a certain amount of time. This sleep could be interrupted by the methods
+    * TreeNode::emitWakeUpSignal() or Tree::emitWakeUpSignal()
+    *
+    * @param timeout  duration of the sleep
+    * @return         true if the timeout was NOT reached and the signal was received.
+    *
+    * */
+  bool sleep(std::chrono::system_clock::duration timeout);
+
+  /**
+   * @brief Wake up the tree. This will interrupt the sleep() method.
+   */
+  void emitWakeUpSignal();
 
   /**
    * @brief Returns the shared WakeUpSignal used by this tree.
@@ -153,7 +167,7 @@ public:
   [[nodiscard]] Blackboard::Ptr rootBlackboard();
 
   //Call the visitor for each node of the tree.
-  void applyVisitor(const std::function<void(const TreeNode*)>& visitor);
+  void applyVisitor(const std::function<void(const TreeNode*)>& visitor) const;
 
   //Call the visitor for each node of the tree.
   void applyVisitor(const std::function<void(TreeNode*)>& visitor);
@@ -187,6 +201,8 @@ public:
   }
 
 private:
+  friend class BehaviorTreeFactory;
+
   std::shared_ptr<WakeUpSignal> wake_up_;
 
   enum TickOption
@@ -197,6 +213,11 @@ private:
   };
 
   NodeStatus tickRoot(TickOption opt, std::chrono::milliseconds sleep_time);
+
+  // Fix #1046: re-point each node's NodeConfig::manifest from the
+  // factory's map to the tree's own copy so the pointers remain
+  // valid after the factory is destroyed.
+  void remapManifestPointers();
 
   uint16_t uid_counter_ = 0;
 };
@@ -283,9 +304,8 @@ public:
   /**
      * @brief registerFromROSPlugins finds all shared libraries that export ROS plugins for behaviortree_cpp, and calls registerFromPlugin for each library.
      * @throws If not compiled with ROS support or if the library cannot load for any reason
-     *
      */
-  void registerFromROSPlugins();
+  [[deprecated("Removed support for ROS1")]] void registerFromROSPlugins();
 
   /**
      * @brief registerBehaviorTreeFromFile.
@@ -384,7 +404,20 @@ public:
                     "[registerNode]: you MUST implement the static method:\n"
                     "  PortsList providedPorts();\n");
 
-      static_assert(!(has_static_ports_list && !param_constructable),
+      // When extra arguments were passed to registerNodeType but the full
+      // constructor signature doesn't match, the problem is most likely a
+      // type mismatch in those extra arguments (issue #837).
+      static_assert(!(has_static_ports_list && !param_constructable
+                       && sizeof...(ExtraArgs) > 0),
+                    "[registerNode]: the constructor is NOT compatible with the "
+                    "arguments provided.\n"
+                    "Verify that the types of the extra arguments passed to "
+                    "registerNodeType match\n"
+                    "the constructor signature: "
+                    "(const std::string&, const NodeConfig&, ...)\n");
+
+      static_assert(!(has_static_ports_list && !param_constructable
+                       && sizeof...(ExtraArgs) == 0),
                     "[registerNode]: since you have a static method providedPorts(),\n"
                     "you MUST add a constructor with signature:\n"
                     "(const std::string&, const NodeConfig&)\n");
@@ -474,12 +507,13 @@ public:
 
   void clearSubstitutionRules();
 
-  using SubstitutionRule = std::variant<std::string, TestNodeConfig>;
+  using SubstitutionRule =
+      std::variant<std::string, TestNodeConfig, std::shared_ptr<TestNodeConfig>>;
 
   /**
    * @brief addSubstitutionRule replace a node with another one when the tree is
    * created.
-   * If the rule ia a string, we will use a diferent node type (already registered)
+   * If the rule ia a string, we will use a different node type (already registered)
    * instead.
    * If the rule is a TestNodeConfig, a test node with that configuration will be created instead.
    *
@@ -503,6 +537,45 @@ public:
    */
   [[nodiscard]] const std::unordered_map<std::string, SubstitutionRule>&
   substitutionRules() const;
+
+  /**
+   * @brief Register a polymorphic cast relationship between Derived and Base types.
+   *
+   * This enables passing shared_ptr<Derived> to ports expecting shared_ptr<Base>
+   * without type mismatch errors. The relationship is automatically applied
+   * to all trees created from this factory.
+   *
+   * Example:
+   *   factory.registerPolymorphicCast<Cat, Animal>();
+   *   factory.registerPolymorphicCast<Sphynx, Cat>();
+   *
+   * @tparam Derived The derived class (must inherit from Base)
+   * @tparam Base The base class (must be polymorphic)
+   */
+  template <typename Derived, typename Base>
+  void registerPolymorphicCast()
+  {
+    polymorphicCastRegistry().registerCast<Derived, Base>();
+  }
+
+  /**
+   * @brief Access the polymorphic cast registry.
+   *
+   * The registry is shared with all trees created from this factory,
+   * allowing trees to outlive the factory while maintaining access
+   * to polymorphic cast relationships.
+   */
+  [[nodiscard]] PolymorphicCastRegistry& polymorphicCastRegistry();
+  [[nodiscard]] const PolymorphicCastRegistry& polymorphicCastRegistry() const;
+
+  /**
+   * @brief Get a shared pointer to the polymorphic cast registry.
+   *
+   * This allows trees and blackboards to hold a reference to the registry
+   * that outlives the factory.
+   */
+  [[nodiscard]] std::shared_ptr<PolymorphicCastRegistry>
+  polymorphicCastRegistryPtr() const;
 
 private:
   struct PImpl;
@@ -530,7 +603,7 @@ std::vector<Blackboard::Ptr> BlackboardBackup(const BT::Tree& tree);
  * @brief BlackboardRestore uses Blackboard::cloneInto to restore
  * all the blackboards of the tree
  *
- * @param backup a vectror of blackboards
+ * @param backup a vector of blackboards
  * @param tree the destination
  */
 void BlackboardRestore(const std::vector<Blackboard::Ptr>& backup, BT::Tree& tree);

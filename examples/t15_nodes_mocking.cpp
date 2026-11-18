@@ -1,9 +1,11 @@
-#include "behaviortree_cpp/bt_factory.h"
 #include "dummy_nodes.h"
 
-// clang-format off
+#include "behaviortree_cpp/bt_factory.h"
 
-static const char* xml_text = R"(
+// clang-format off
+namespace
+{
+const char* xml_text = R"(
 <root BTCPP_format="4">
 
   <BehaviorTree ID="MainTree">
@@ -32,7 +34,7 @@ static const char* xml_text = R"(
 
 </root>
  )";
-
+}  // namespace
 // clang-format on
 
 /**
@@ -43,7 +45,7 @@ static const char* xml_text = R"(
  * @return
  */
 
-int main(int argc, char** argv)
+int main(int /*argc*/, char** /*argv*/)
 {
   using namespace DummyNodes;
   BT::BehaviorTreeFactory factory;
@@ -97,7 +99,7 @@ int main(int argc, char** argv)
 
   // this will be synchronous (async_delay is 0)
   BT::TestNodeConfig counting_config;
-  test_config.return_status = BT::NodeStatus::SUCCESS;
+  counting_config.return_status = BT::NodeStatus::SUCCESS;
 
   //---------------------------------------------------------------
   // Next, we want to substitute one or more of out Nodes with this mocks
@@ -147,7 +149,7 @@ int main(int argc, char** argv)
     factory.loadSubstitutionRuleFromJSON(json_text);
   }
   //---------------------------------------------------------------
-  // IMPORTANT: all substiutions must be done BEFORE creating the tree
+  // IMPORTANT: all substitutions must be done BEFORE creating the tree
   // During the construction phase of the tree, the substitution
   // rules will be used to instantiate the test nodes, instead of the
   // original ones.
@@ -158,7 +160,7 @@ int main(int argc, char** argv)
   return 0;
 }
 
-/* Expecte output:
+/* Expected output:
 
 ----- Nodes fullPath() -------
 Sequence::1

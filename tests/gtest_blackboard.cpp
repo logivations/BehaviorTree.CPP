@@ -10,9 +10,10 @@
 *   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include <gtest/gtest.h>
-#include "behaviortree_cpp/bt_factory.h"
 #include "behaviortree_cpp/blackboard.h"
+#include "behaviortree_cpp/bt_factory.h"
+
+#include <gtest/gtest.h>
 
 #include "../sample_nodes/dummy_nodes.h"
 
@@ -44,30 +45,6 @@ public:
   static PortsList providedPorts()
   {
     return { BT::InputPort<int>("in_port"), BT::OutputPort<int>("out_port") };
-  }
-};
-
-class BB_TypedTestNode : public SyncActionNode
-{
-public:
-  BB_TypedTestNode(const std::string& name, const NodeConfig& config)
-    : SyncActionNode(name, config)
-  {}
-
-  NodeStatus tick()
-  {
-    return NodeStatus::SUCCESS;
-  }
-
-  static PortsList providedPorts()
-  {
-    return { BT::InputPort("input"),
-             BT::InputPort<int>("input_int"),
-             BT::InputPort<std::string>("input_string"),
-
-             BT::OutputPort("output"),
-             BT::OutputPort<int>("output_int"),
-             BT::OutputPort<std::string>("output_string") };
   }
 };
 
@@ -197,37 +174,7 @@ TEST(BlackboardTest, TypoInPortName)
   ASSERT_THROW(auto tree = factory.createTreeFromText(xml_text), RuntimeError);
 }
 
-TEST(BlackboardTest, CheckPortType)
-{
-  BehaviorTreeFactory factory;
-  factory.registerNodeType<BB_TypedTestNode>("TypedNode");
-
-  //-----------------------------
-  std::string good_one = R"(
-    <root BTCPP_format="4" >
-        <BehaviorTree ID="MainTree">
-            <Sequence>
-                <TypedNode name = "first"  output_int="{matching}"  output_string="{whatever}" output="{no_problem}" />
-                <TypedNode name = "second" input_int="{matching}"   input="{whatever}"         input_string="{no_problem}"  />
-            </Sequence>
-        </BehaviorTree>
-    </root>)";
-
-  auto tree = factory.createTreeFromText(good_one);
-  ASSERT_NE(tree.rootNode(), nullptr);
-  //-----------------------------
-  std::string bad_one = R"(
-    <root BTCPP_format="4" >
-        <BehaviorTree ID="MainTree">
-            <Sequence>
-                <TypedNode name = "first"  output_int="{value}" />
-                <TypedNode name = "second" input_string="{value}" />
-            </Sequence>
-        </BehaviorTree>
-    </root>)";
-
-  ASSERT_THROW(auto tree = factory.createTreeFromText(bad_one), RuntimeError);
-}
+// NOTE: CheckPortType test moved to gtest_port_type_rules.cpp
 
 class RefCountClass
 {
@@ -244,17 +191,23 @@ public:
 
   RefCountClass& operator=(const RefCountClass& from)
   {
-    sptr_ = (from.sptr_);
-    std::cout << "equal copied: ref_count " << sptr_.use_count() << std::endl;
+    if(this != &from)
+    {
+      sptr_ = (from.sptr_);
+      std::cout << "equal copied: ref_count " << sptr_.use_count() << std::endl;
+    }
     return *this;
   }
+
+  RefCountClass(RefCountClass&&) = default;
+  RefCountClass& operator=(RefCountClass&&) = default;
 
   virtual ~RefCountClass()
   {
     std::cout << ("Destructor") << std::endl;
   }
 
-  int refCount() const
+  long refCount() const
   {
     return sptr_.use_count();
   }
@@ -293,6 +246,8 @@ TEST(BlackboardTest, CheckTypeSafety)
   is = std::is_constructible<BT::StringView, std::string>::value;
   ASSERT_TRUE(is);
 }
+
+#ifndef USE_SANITIZE_THREAD
 
 TEST(BlackboardTest, AnyPtrLocked)
 {
@@ -346,6 +301,7 @@ TEST(BlackboardTest, AnyPtrLocked)
     ASSERT_NE(cycles, value);
   }
 }
+#endif
 
 TEST(BlackboardTest, SetStringView)
 {
@@ -457,6 +413,29 @@ struct Point
   double x;
   double y;
 };
+
+// Template specialization to converts a string to Point.
+namespace BT
+{
+template <>
+[[nodiscard]] Point convertFromString(StringView str)
+{
+  // We expect real numbers separated by semicolons
+  auto parts = splitString(str, ';');
+  if(parts.size() != 2)
+  {
+    throw RuntimeError("invalid input)");
+  }
+  else
+  {
+    Point output{ 0.0, 0.0 };
+    output.x = convertFromString<double>(parts[0]);
+    output.y = convertFromString<double>(parts[1]);
+    // std::cout << "Building a position 2d object " << output.x << "; " << output.y << "\n" << std::flush;
+    return output;
+  }
+}
+}  // end namespace BT
 
 TEST(BlackboardTest, SetBlackboard_Issue725)
 {
@@ -621,7 +600,7 @@ TEST(BlackboardTest, TimestampedInterface)
   auto bb = BT::Blackboard::create();
 
   // still empty, expected to fail
-  int value;
+  int value = 0;
   ASSERT_FALSE(bb->getStamped<int>("value"));
   ASSERT_FALSE(bb->getStamped("value", value));
 
@@ -653,4 +632,211 @@ TEST(BlackboardTest, TimestampedInterface)
   ASSERT_TRUE(stamp_opt);
   ASSERT_EQ(stamp_opt->seq, 2);
   ASSERT_GE(stamp_opt->time.count(), nsec_before);
+}
+
+TEST(BlackboardTest, SetBlackboard_Upd_Ts_SeqId)
+{
+  BT::BehaviorTreeFactory factory;
+
+  const std::string xml_text = R"(
+  <root BTCPP_format="4">
+    <BehaviorTree ID="MainTree">
+      <Sequence>
+        <Script code="other_point:=first_point" />
+        <Sleep msec="5" />
+        <SetBlackboard value="{second_point}" output_key="other_point" />
+      </Sequence>
+    </BehaviorTree>
+  </root> )";
+
+  factory.registerBehaviorTreeFromText(xml_text);
+  auto tree = factory.createTree("MainTree");
+  auto& blackboard = tree.subtrees.front()->blackboard;
+
+  const Point point1 = { 2, 2 };
+  const Point point2 = { 3, 3 };
+  blackboard->set("first_point", point1);
+  blackboard->set("second_point", point2);
+
+  tree.tickExactlyOnce();
+  const auto entry_ptr = blackboard->getEntry("other_point");
+  const auto ts1 = entry_ptr->stamp;
+  const auto seq_id1 = entry_ptr->sequence_id;
+  tree.tickWhileRunning();
+  const auto ts2 = entry_ptr->stamp;
+  const auto seq_id2 = entry_ptr->sequence_id;
+
+  ASSERT_GT(ts2.count(), ts1.count());
+  ASSERT_GT(seq_id2, seq_id1);
+}
+
+// NOTE: SetBlackboard_ChangeType1 and SetBlackboard_ChangeType2 tests
+// moved to gtest_port_type_rules.cpp
+
+// Simple Action that updates an instance of Point in the blackboard
+class UpdatePosition : public BT::SyncActionNode
+{
+public:
+  UpdatePosition(const std::string& name, const BT::NodeConfig& config)
+    : BT::SyncActionNode(name, config)
+  {}
+
+  BT::NodeStatus tick() override
+  {
+    const auto in_pos = getInput<Point>("pos_in");
+    if(!in_pos.has_value())
+      return BT::NodeStatus::FAILURE;
+    Point _pos = in_pos.value();
+    _pos.x += getInput<double>("x").value_or(0.0);
+    _pos.y += getInput<double>("y").value_or(0.0);
+    setOutput("pos_out", _pos);
+    return BT::NodeStatus::SUCCESS;
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return { BT::InputPort<Point>("pos_in", { 0.0, 0.0 }, "Initial position"),
+             BT::InputPort<double>("x"), BT::InputPort<double>("y"),
+             BT::OutputPort<Point>("pos_out") };
+  }
+
+private:
+};
+
+TEST(BlackboardTest, SetBlackboard_WithPortRemapping)
+{
+  BT::BehaviorTreeFactory factory;
+
+  const std::string xml_text = R"(
+    <?xml version="1.0"?>
+    <root BTCPP_format="4" main_tree_to_execute="MainTree">
+      <BehaviorTree ID="MainTree">
+          <Sequence>
+              <SetBlackboard output_key="pos" value="0.0;0.0" />
+              <Repeat num_cycles="3">
+                  <Sequence>
+                      <UpdatePosition pos_in="{pos}" x="0.1" y="0.2" pos_out="{pos}"/>
+                      <SubTree ID="UpdPosPlus" _autoremap="true" new_pos="2.2;2.4" />
+                      <Sleep msec="125"/>
+                      <SetBlackboard output_key="pos" value="22.0;22.0" />
+                  </Sequence>
+              </Repeat>
+          </Sequence>
+      </BehaviorTree>
+      <BehaviorTree ID="UpdPosPlus">
+          <Sequence>
+              <SetBlackboard output_key="pos" value="3.0;5.0" />
+              <SetBlackboard output_key="pos" value="{new_pos}" />
+          </Sequence>
+      </BehaviorTree>
+    </root>
+  )";
+
+  factory.registerNodeType<UpdatePosition>("UpdatePosition");
+  factory.registerBehaviorTreeFromText(xml_text);
+  auto tree = factory.createTree("MainTree");
+  auto& blackboard = tree.subtrees.front()->blackboard;
+
+  // First tick should succeed and update the value within the subtree
+  ASSERT_NO_THROW(tree.tickExactlyOnce());
+
+  const auto entry_ptr = blackboard->getEntry("pos");
+  ASSERT_EQ(entry_ptr->value.type(), typeid(Point));
+
+  const auto x = entry_ptr->value.cast<Point>().x;
+  const auto y = entry_ptr->value.cast<Point>().y;
+  ASSERT_EQ(x, 2.2);
+  ASSERT_EQ(y, 2.4);
+
+  // Tick till the end with no crashes
+  ASSERT_NO_THROW(tree.tickWhileRunning(););
+}
+
+// Issue #408: debugMessage should show remapped entries from parent blackboard
+TEST(BlackboardTest, DebugMessageShowsRemappedEntries_Issue408)
+{
+  // Create parent BB with a value
+  auto parent_bb = Blackboard::create();
+  parent_bb->set("parent_value", 42);
+
+  // Create child BB with remapping
+  auto child_bb = Blackboard::create(parent_bb);
+  child_bb->addSubtreeRemapping("local_name", "parent_value");
+
+  // Capture debugMessage output
+  testing::internal::CaptureStdout();
+  child_bb->debugMessage();
+  std::string output = testing::internal::GetCapturedStdout();
+
+  // The output should contain the remapped key with its type info from parent
+  EXPECT_TRUE(output.find("local_name") != std::string::npos)
+      << "debugMessage output should mention 'local_name'. Got: " << output;
+  EXPECT_TRUE(output.find("parent_value") != std::string::npos)
+      << "debugMessage output should mention 'parent_value'. Got: " << output;
+  // The output should show the parent entry's type, not just the remapping
+  EXPECT_TRUE(output.find("int") != std::string::npos) << "debugMessage output should "
+                                                          "show the type of the remapped "
+                                                          "entry. Got: "
+                                                       << output;
+}
+
+// Issue #942: getLockedPortContent should return a valid locked reference
+// even when the port is not explicitly declared in XML, as long as there is
+// a default blackboard remapping (e.g., "{=}").
+class ActionWithLockedPort : public SyncActionNode
+{
+public:
+  ActionWithLockedPort(const std::string& name, const NodeConfig& config)
+    : SyncActionNode(name, config)
+  {}
+
+  NodeStatus tick() override
+  {
+    auto any_locked = getLockedPortContent("value");
+    if(!any_locked)
+    {
+      locked_valid = false;
+      return NodeStatus::FAILURE;
+    }
+    locked_valid = true;
+    // Assign a value through the locked reference
+    any_locked.assign(42);
+    return NodeStatus::SUCCESS;
+  }
+
+  static PortsList providedPorts()
+  {
+    return { BidirectionalPort<int>("value", "{=}", "A value with default BB remap") };
+  }
+
+  bool locked_valid = false;
+};
+
+TEST(BlackboardTest, GetLockedPortContentWithDefault_Issue942)
+{
+  // XML does NOT specify the "value" port — relies on default "{=}"
+  std::string xml_txt = R"(
+    <root BTCPP_format="4" >
+      <BehaviorTree ID="Main">
+        <ActionWithLockedPort/>
+      </BehaviorTree>
+    </root>)";
+
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<ActionWithLockedPort>("ActionWithLockedPort");
+  auto tree = factory.createTreeFromText(xml_txt);
+  auto status = tree.tickWhileRunning();
+
+  ASSERT_EQ(status, NodeStatus::SUCCESS);
+
+  for(const auto& node : tree.subtrees.front()->nodes)
+  {
+    if(auto action = dynamic_cast<ActionWithLockedPort*>(node.get()))
+    {
+      ASSERT_TRUE(action->locked_valid);
+    }
+  }
+
+  // The value should be accessible from the blackboard
+  ASSERT_EQ(tree.rootBlackboard()->get<int>("value"), 42);
 }

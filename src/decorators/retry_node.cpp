@@ -1,5 +1,5 @@
 /* Copyright (C) 2015-2018 Michele Colledanchise -  All Rights Reserved
- * Copyright (C) 2018-2020 Davide Faconti, Eurecat -  All Rights Reserved
+ * Copyright (C) 2018-2025 Davide Faconti, Eurecat -  All Rights Reserved
 *
 *   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 *   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -15,8 +15,6 @@
 
 namespace BT
 {
-constexpr const char* RetryNode::NUM_ATTEMPTS;
-
 RetryNode::RetryNode(const std::string& name, int NTries)
   : DecoratorNode(name, {})
   , max_attempts_(NTries)
@@ -50,20 +48,12 @@ NodeStatus RetryNode::tick()
   }
 
   bool do_loop = try_count_ < max_attempts_ || max_attempts_ == -1;
-
-  if(status() == NodeStatus::IDLE)
-  {
-    all_skipped_ = true;
-  }
   setStatus(NodeStatus::RUNNING);
 
   while(do_loop)
   {
-    NodeStatus prev_status = child_node_->status();
-    NodeStatus child_status = child_node_->executeTick();
-
-    // switch to RUNNING state as soon as you find an active child
-    all_skipped_ &= (child_status == NodeStatus::SKIPPED);
+    const NodeStatus prev_status = child_node_->status();
+    const NodeStatus child_status = child_node_->executeTick();
 
     switch(child_status)
     {
@@ -75,12 +65,14 @@ NodeStatus RetryNode::tick()
 
       case NodeStatus::FAILURE: {
         try_count_++;
+        // Refresh max_attempts_ in case it changed in one of the child nodes
+        getInput(NUM_ATTEMPTS, max_attempts_);
         do_loop = try_count_ < max_attempts_ || max_attempts_ == -1;
 
         resetChild();
 
         // Return the execution flow if the child is async,
-        // to make this interruptable.
+        // to make this interruptible.
         if(requiresWakeUp() && prev_status == NodeStatus::IDLE && do_loop)
         {
           emitWakeUpSignal();
@@ -107,7 +99,7 @@ NodeStatus RetryNode::tick()
   }
 
   try_count_ = 0;
-  return all_skipped_ ? NodeStatus::SKIPPED : NodeStatus::FAILURE;
+  return NodeStatus::FAILURE;
 }
 
 }  // namespace BT

@@ -35,12 +35,13 @@
 // DEALINGS IN THE SOFTWARE.
 //
 
-#ifndef Foundation_SharedLibrary_INCLUDED
-#define Foundation_SharedLibrary_INCLUDED
+#ifndef BT_Foundation_SharedLibrary_INCLUDED
+#define BT_Foundation_SharedLibrary_INCLUDED
 
 #include "platform.hpp"
-#include <string>
+
 #include <mutex>
+#include <string>
 
 namespace BT
 {
@@ -127,10 +128,12 @@ public:
   /// with prefix() and suffix()
   static std::string getOSName(const std::string& name);
 
-private:
-  SharedLibrary(const SharedLibrary&);
-  SharedLibrary& operator=(const SharedLibrary&);
+  SharedLibrary(const SharedLibrary&) = delete;
+  SharedLibrary& operator=(const SharedLibrary&) = delete;
+  SharedLibrary(SharedLibrary&&) = delete;
+  SharedLibrary& operator=(SharedLibrary&&) = delete;
 
+private:
   void* findSymbol(const std::string& name);
 
   std::string _path;
@@ -140,4 +143,4 @@ private:
 
 }  // namespace BT
 
-#endif  // Foundation_SharedLibrary_INCLUDED
+#endif  // BT_Foundation_SharedLibrary_INCLUDED
