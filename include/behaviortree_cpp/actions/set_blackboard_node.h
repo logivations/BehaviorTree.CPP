@@ -108,7 +108,9 @@ private:
       std::unique_lock dst_lock(dst_entry->entry_mutex);
       const TypeInfo dst_info = dst_entry->info;
       dst_lock.unlock();
-      if(dst_info.type() != typeid(std::string))
+      // A weakly typed entry (created from a port without a type, AnyTypeAllowed or
+      // BT::Any) takes the string as it is: there is no type to parse it into.
+      if(dst_info.type() != typeid(std::string) && dst_info.isStronglyTyped())
       {
         try
         {

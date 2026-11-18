@@ -1158,3 +1158,40 @@ TEST(BlackboardTest, SetThroughSubtreeRemappingChecksType)
   ASSERT_NO_THROW(child_bb->set("local_small", 100));
   ASSERT_EQ(parent_bb->get<uint8_t>("small"), 100);
 }
+
+// SetBlackboard writes through Blackboard::set<BT::Any>. Into an entry without a real type (as
+// created for a port without a type) it "converted" the literal with the entry's empty converter:
+// the first write stored an empty value and locked the entry to the type BT::Any, the second one
+// threw "Can't convert string [truck] to type [BT::Any]". The literal is stored as it is.
+TEST(BlackboardTest, SetBlackboardLiteralIntoWeaklyTypedEntry)
+{
+  BehaviorTreeFactory factory;
+  std::vector<std::string> seen;
+  factory.registerSimpleAction(
+      "UseField",
+      [&seen](TreeNode& node) {
+        auto field = node.getInput<std::string>("field");
+        seen.push_back(field ? field.value() : "<" + field.error() + ">");
+        return NodeStatus::SUCCESS;
+      },
+      { InputPort("field") });
+
+  const std::string xml_text = R"(
+    <root BTCPP_format="4">
+      <BehaviorTree ID="Main">
+        <Sequence>
+          <SetBlackboard output_key="field_type" value="narrow"/>
+          <UseField field="{field_type}"/>
+          <SetBlackboard output_key="field_type" value="truck"/>
+          <UseField field="{field_type}"/>
+        </Sequence>
+      </BehaviorTree>
+    </root>)";
+
+  auto blackboard = Blackboard::create();
+  // as created for a port without a type
+  blackboard->createEntry("field_type", TypeInfo());
+  auto tree = factory.createTreeFromText(xml_text, blackboard);
+  ASSERT_EQ(tree.tickWhileRunning(), NodeStatus::SUCCESS);
+  ASSERT_EQ(seen, (std::vector<std::string>{ "narrow", "truck" }));
+}
