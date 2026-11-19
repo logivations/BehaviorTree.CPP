@@ -269,6 +269,32 @@ inline bool ValidCast(const SRC& val)
       }
     }
     // Handle conversion to integral
+    else if constexpr(std::is_integral_v<TO> && std::is_integral_v<SRC> &&
+                      !std::is_same_v<SRC, bool> && !std::is_same_v<TO, bool>)
+    {
+      // Compare signedness-aware (as C++20 std::in_range): static_cast<SRC>(TO::max)
+      // wraps when TO's max does not fit SRC (int -> unsigned: -1), which rejected
+      // every int to unsigned cast, e.g. int(500) for a port of type unsigned.
+      if constexpr(std::is_signed_v<SRC> && !std::is_signed_v<TO>)
+      {
+        if(val < 0 ||
+           static_cast<std::make_unsigned_t<SRC>>(val) > std::numeric_limits<TO>::max())
+        {
+          return false;
+        }
+      }
+      else if constexpr(!std::is_signed_v<SRC> && std::is_signed_v<TO>)
+      {
+        if(val > static_cast<std::make_unsigned_t<TO>>(std::numeric_limits<TO>::max()))
+        {
+          return false;
+        }
+      }
+      else if(val < std::numeric_limits<TO>::lowest() || val > std::numeric_limits<TO>::max())
+      {
+        return false;
+      }
+    }
     else if constexpr(std::is_integral_v<TO>)
     {
       // static_cast<SRC>(TO::max) rounds up to an out-of-range value when TO has

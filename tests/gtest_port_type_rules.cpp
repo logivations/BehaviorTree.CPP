@@ -39,6 +39,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 using namespace BT;
 
 //------------------------------------------------------------------------------
@@ -737,9 +739,13 @@ TEST(PortTypeRules, SafeCast_DifferentIntTypes_NotAllowed)
   // Create entry as int64_t
   bb->set<int64_t>("key", 100);
 
-  // Even though int values fit in int64_t, different types are NOT allowed
-  // Safe casting only works within the SAME conceptual type (e.g., int to uint8_t)
-  EXPECT_THROW(bb->set("key", int(-1000000)), LogicError);
+  // logivations fork: an int that fits in int64_t is a safe cast, as in BT.CPP 4.6 (upstream
+  // rejected it only because the range check cast INT64_MIN/MAX to int: 0 and -1)
+  EXPECT_NO_THROW(bb->set("key", int(-1000000)));
+  EXPECT_EQ(bb->get<int64_t>("key"), -1000000);
+
+  // a value that does not fit is still rejected
+  EXPECT_THROW(bb->set("key", uint64_t(std::numeric_limits<uint64_t>::max())), LogicError);
 
   // Setting same type works
   ASSERT_NO_THROW(bb->set("key", int64_t(1000000)));

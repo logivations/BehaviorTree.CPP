@@ -1195,3 +1195,23 @@ TEST(BlackboardTest, SetBlackboardLiteralIntoWeaklyTypedEntry)
   ASSERT_EQ(tree.tickWhileRunning(), NodeStatus::SUCCESS);
   ASSERT_EQ(seen, (std::vector<std::string>{ "narrow", "truck" }));
 }
+
+// A port of type unsigned (e.g. Delay's delay_msec) remapped to an entry that the application
+// sets with an int: the safe numeric cast compared against static_cast<int>(UINT_MAX), which is
+// -1, and rejected every value ("once declared, the type of a port shall not change").
+TEST(BlackboardTest, SetIntIntoUnsignedEntry)
+{
+  auto blackboard = Blackboard::create();
+  blackboard->createEntry("delay", TypeInfo::Create<unsigned>());
+  ASSERT_NO_THROW(blackboard->set<int>("delay", 500));
+  ASSERT_EQ(blackboard->get<unsigned>("delay"), 500u);
+  ASSERT_THROW(blackboard->set<int>("delay", -1), LogicError);
+
+  blackboard->createEntry("small", TypeInfo::Create<uint8_t>());
+  ASSERT_NO_THROW(blackboard->set<int>("small", 255));
+  ASSERT_THROW(blackboard->set<int>("small", 256), LogicError);
+
+  blackboard->createEntry("signed", TypeInfo::Create<int8_t>());
+  ASSERT_NO_THROW(blackboard->set<unsigned>("signed", 127u));
+  ASSERT_THROW(blackboard->set<unsigned>("signed", 128u), LogicError);
+}
