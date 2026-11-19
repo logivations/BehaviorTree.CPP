@@ -124,7 +124,19 @@ private:
       }
     }
 
-    config().blackboard->set(output_key, out_value);
+    if(!dst_entry && out_value.isString())
+    {
+      // A literal creates the entry as in BT.CPP 4.6: through set<std::string>, which
+      // makes it weakly typed (AnyTypeAllowed), so that a node writing another type
+      // later (e.g. a bool output initialised with "false") takes it over. Through
+      // set<BT::Any> the entry was strongly typed std::string and that write threw
+      // "once declared, the type of a port shall not change".
+      config().blackboard->set(output_key, out_value.cast<std::string>());
+    }
+    else
+    {
+      config().blackboard->set(output_key, out_value);
+    }
 
     return NodeStatus::SUCCESS;
   }

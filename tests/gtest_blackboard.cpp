@@ -1215,3 +1215,46 @@ TEST(BlackboardTest, SetIntIntoUnsignedEntry)
   ASSERT_NO_THROW(blackboard->set<unsigned>("signed", 127u));
   ASSERT_THROW(blackboard->set<unsigned>("signed", 128u), LogicError);
 }
+
+// A tree initialises a flag with a literal and a node writes it as bool later. The entry
+// does not exist yet when SetBlackboard runs (a navigator clears the blackboard between goals
+// and reuses the tree, so the entries created with the tree are gone). BT.CPP 4.6 created the
+// entry of a literal weakly typed; through set<BT::Any> it became std::string and the bool
+// write threw "once declared, the type of a port shall not change".
+class CutPathNode : public SyncActionNode
+{
+public:
+  CutPathNode(const std::string& name, const NodeConfig& config)
+    : SyncActionNode(name, config)
+  {}
+  static PortsList providedPorts()
+  {
+    return {};
+  }
+  NodeStatus tick() override
+  {
+    config().blackboard->set("path_was_cut", true);
+    return NodeStatus::SUCCESS;
+  }
+};
+
+TEST(BlackboardTest, SetBlackboardLiteralThenBoolIntoNewEntry)
+{
+  BehaviorTreeFactory factory;
+  factory.registerNodeType<CutPathNode>("CutPath");
+
+  const std::string xml_text = R"(
+    <root BTCPP_format="4">
+      <BehaviorTree ID="Main">
+        <Sequence>
+          <SetBlackboard output_key="path_was_cut" value="false"/>
+          <CutPath/>
+          <SetBlackboard output_key="path_was_cut" value="false"/>
+        </Sequence>
+      </BehaviorTree>
+    </root>)";
+
+  auto tree = factory.createTreeFromText(xml_text);
+  ASSERT_EQ(tree.tickWhileRunning(), NodeStatus::SUCCESS);
+  ASSERT_EQ(tree.rootBlackboard()->get<bool>("path_was_cut"), false);
+}
